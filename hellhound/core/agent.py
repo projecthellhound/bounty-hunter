@@ -1492,6 +1492,34 @@ def _looks_like_question_for_researcher(text: str) -> bool:
     return bool(_RESEARCHER_QUESTION_RE.search(tail))
 
 
+def _maybe_rewrite_continue_nudge(user_text: str, consecutive_zero_progress_truncations: int) -> str:
+    """
+    Pure rewrite function — pulled out to be unit-testable without a real
+    LLM call, same reasoning as _compute_auto_continue below. See the
+    "CAUGHT IN THE WILD" comment at its call site (top of handle_message)
+    for the full story: on a generation-length truncation, auto-continue
+    blindly resends "continue", which just asks the model to re-attempt
+    the SAME oversized tool-call batch and hit the SAME ceiling again. Once
+    that's happened twice in a row (nothing ran either time), rewrite the
+    auto-continue nudge into an instruction that targets the actual cause —
+    stop batching, one call at a time — instead of repeating a doomed
+    request a third time. A real, explicit message from the researcher
+    (anything that isn't exactly "continue"/"go ahead") always passes
+    through untouched.
+    """
+    if (
+        user_text.strip().lower() in ("continue", "go ahead")
+        and consecutive_zero_progress_truncations >= 2
+    ):
+        return (
+            "continue — but issue exactly ONE tool call this time and stop there, don't queue a "
+            "batch. The last few responses got cut off mid-JSON while trying to queue several tool "
+            "calls at once (a generation-length limit, not a decision to stop) — one call at a time "
+            "will get past it. Pick the single most important next action and run only that."
+        )
+    return user_text
+
+
 def _compute_auto_continue(
     timed_out: bool,
     was_cancelled: bool,
@@ -13569,6 +13597,7 @@ class Agent:
         self._active_session_context: Optional[Dict[str, Any]] = None  # this turn's session_context, if any — see set_target()
         self._auto_continue_streak: int = 0  # consecutive auto-continued turns this process, in-memory only — see the AUTO-CONTINUE DECISION block in handle_message
         self._last_turn_auto_continue: bool = False  # read by the CLI loop right after handle_message() returns to decide whether to auto-send "continue"
+        self._consecutive_zero_progress_truncations: int = 0  # see the "identical truncation keeps repeating" rewrite near the top of handle_message
 
     def _compact_history_if_needed(self) -> None:
         """
@@ -15317,6 +15346,32 @@ If there is nothing worth generalizing, return an empty array: []"""
         """
         Main autonomous reasoning and conversational loop.
         """
+        # CAUGHT IN THE WILD (2026-11): a researcher on a non-native-tool-
+        # calling provider (prompted-JSON mode — the model writes the tool
+        # call as text instead of using a structured API, a known NVIDIA
+        # NIM/Nemotron pain point — see docs.nvidia.com/nim .../function-
+        # calling.html on parser-extraction failures) saw the exact same
+        # "started to run set_target, plus 12 more queued... cut off mid-
+        # JSON... nothing ran" message TWICE IN A ROW. Auto-continue (below,
+        # near "AUTO-CONTINUE DECISION") correctly recognizes a generation-
+        # length truncation as "not a deliberate stop" and resends plain
+        # "continue" automatically — but blindly resending "continue" asks
+        # the model to re-attempt the EXACT SAME oversized batch, which hits
+        # the EXACT SAME generation-length ceiling and truncates identically
+        # again. That's not progress, just a loop burning turns (bounded by
+        # streak_cap=8, but 8 rounds of zero-progress retries is still a bad
+        # experience) until the cap finally gives up. Once a SECOND
+        # consecutive zero-progress truncation is recorded (streak tracked
+        # at the bottom of this function), rewrite the literal "continue"/
+        # "go ahead" auto-continue nudge into an instruction that actually
+        # addresses the root cause — stop batching, issue one call at a
+        # time — instead of repeating the same doomed request. A real,
+        # explicit user message (not "continue") always passes through
+        # untouched; this only intercepts the auto-continue nudge itself.
+        # Rewritten BEFORE original_user_text is captured, since most of the
+        # actual prompt construction below reads original_user_text, not
+        # user_text — rewriting only the latter would never reach the model.
+        user_text = _maybe_rewrite_continue_nudge(user_text, self._consecutive_zero_progress_truncations)
         original_user_text = user_text
         # Track this turn's session_context so set_target() can sync into it
         # live, the instant a target switch happens — including mid-turn,
@@ -17708,8 +17763,22 @@ INSTRUCTIONS:
             truncated_tool_calls=_truncated_tool_calls,
         )
         self._auto_continue_streak = (_auto_continue_streak + 1) if should_auto_continue else 0
+        # Zero-progress-truncation streak — see the rewrite near the top of
+        # handle_message. Distinct from _auto_continue_streak above: that one
+        # just counts "did we auto-continue", this one specifically counts
+        # "did we auto-continue AND genuinely nothing ran", which is the
+        # actual signal that blindly repeating the same request is futile.
+        # Any real tool execution resets it, even mid-streak, since that
+        # means the retry DID make progress even if it also truncated again.
+        _zero_progress_truncation = _truncated_tool_calls and not tools_executed
+        self._consecutive_zero_progress_truncations = (
+            self._consecutive_zero_progress_truncations + 1 if _zero_progress_truncation else 0
+        )
         self.target.state["last_turn_diagnostics"]["auto_continue"] = should_auto_continue
         self.target.state["last_turn_diagnostics"]["new_finding_this_turn"] = _new_finding_this_turn
+        self.target.state["last_turn_diagnostics"]["consecutive_zero_progress_truncations"] = (
+            self._consecutive_zero_progress_truncations
+        )
         self._last_turn_auto_continue = should_auto_continue
 
         save_target(self.target)
