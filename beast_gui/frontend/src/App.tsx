@@ -198,6 +198,11 @@ export default function App() {
       (SEV_ORDER[a.severity] ?? 5) - (SEV_ORDER[b.severity] ?? 5) || a.id - b.id
   );
 
+  // Live background tasks for the right rail: the same tool activity shown as
+  // cards in the center, surfaced here as a compact running/done list.
+  const actions = entries.filter((e): e is ToolCard => e.kind === "tool");
+  const runningCount = actions.filter((a) => !a.done).length;
+
   return (
     <div className={`app ${leftCollapsed ? "l-col" : ""} ${rightCollapsed ? "r-col" : ""}`}>
       {/* ── LEFT RAIL ─────────────────────────────────────────────── */}
@@ -304,6 +309,26 @@ export default function App() {
         </button>
         {!rightCollapsed && (
           <>
+            <div className="rail-section-title">
+              ACTIONS
+              <span className="count">
+                {runningCount > 0 ? `${runningCount} running` : actions.length}
+              </span>
+            </div>
+            <div className="action-list">
+              {actions
+                .slice(-14)
+                .reverse()
+                .map((a, i) => (
+                  <div key={i} className={`action ${a.done ? "done" : "running"}`}>
+                    <span className="action-dot" />
+                    <span className="action-name">{a.tool}</span>
+                    <span className="action-args">{prettyArgs(a.args)}</span>
+                  </div>
+                ))}
+              {actions.length === 0 && <div className="empty">no actions yet</div>}
+            </div>
+
             <div className="rail-section-title">
               FINDINGS <span className="count">{findings.length}</span>
             </div>

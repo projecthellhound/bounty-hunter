@@ -463,6 +463,55 @@
   cursor: default;
 }
 
+/* ── actions / background tasks (right rail, top) ──────────────── */
+.action-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 10px 8px;
+  max-height: 38vh;
+  overflow-y: auto;
+}
+.action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.action:hover {
+  background: var(--panel-2);
+}
+.action-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: #e2e2e2;
+}
+.action.running .action-dot {
+  background: var(--text);
+  animation: pulse 1s ease-in-out infinite;
+}
+.action-name {
+  color: var(--text-dim);
+  font-weight: 500;
+  flex: none;
+}
+.action.running .action-name {
+  color: var(--text);
+}
+.action-args {
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  font-size: 11px;
+}
+
 /* ── findings panel (the only red zone) ────────────────────────── */
 .finding-list {
   display: flex;
