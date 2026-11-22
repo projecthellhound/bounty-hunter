@@ -238,7 +238,7 @@ def terminal_clear():
 def _launch_console(classic: bool = False):
     _configure_logging()
 
-    # Default to the Claude Code-style Textual TUI (scrollable transcript,
+    # Default to the full-screen Textual TUI (scrollable transcript,
     # pinned input, clickable/collapsible tool cards showing the real
     # request/response). Force the classic prompt_toolkit REPL with either
     # `hellhound --classic` or HELLHOUND_CLASSIC_UI=1. If the TUI can't start

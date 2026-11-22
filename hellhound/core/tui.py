@@ -1,5 +1,5 @@
 """
-hellhound/core/tui.py — Textual interactive terminal (Claude Code-style).
+hellhound/core/tui.py — Textual full-screen interactive terminal.
 
 A real full-screen TUI: a scrollable transcript in the middle, a pinned
 input at the bottom, and — the whole point — every tool call rendered as a
@@ -256,8 +256,8 @@ class SuggestionBox(OptionList):
 
 class PromptArea(TextArea):
     """The prompt box — a soft-wrapping, auto-growing editor so a long line
-    FLOWS onto the next row as a paragraph (like Claude Code) instead of
-    scrolling the start off the left edge where you can't see what you typed.
+    FLOWS onto the next row as a paragraph instead of scrolling the start
+    off the left edge where you can't see what you typed.
 
     Enter submits; Shift+Enter / Alt+Enter / Ctrl+J inserts a newline for a
     deliberate multi-line prompt. ↑/↓ recall shell history only at the very
@@ -654,7 +654,7 @@ class SlashCommandProvider(Provider):
 # ── The app ──────────────────────────────────────────────────────────────────
 
 class HellhoundApp(App):
-    """Claude Code-style interactive terminal for Hellhound."""
+    """Full-screen interactive terminal for Hellhound."""
 
     TITLE = "HELLHOUND — Bounty Hunter"
     COMMANDS = App.COMMANDS | {SlashCommandProvider}
@@ -890,8 +890,7 @@ class HellhoundApp(App):
 
     _TRANSCRIPT_CAP = 100  # max widgets kept LIVE in the transcript. Textual re-renders the
                            # whole widget tree, so an unbounded transcript is the FPS killer
-                           # on a long session — bounding it is the Claude-Code-style
-                           # lightweight-scrollback trick that keeps every frame cheap.
+                           # on a long session — bounding it keeps every frame cheap.
 
     def _trim_transcript(self) -> None:
         """Drop the OLDEST widgets once the transcript passes the cap, so the
@@ -939,8 +938,8 @@ class HellhoundApp(App):
 
     def new_assistant_message(self) -> Markdown:
         # Reply renders LIVE into a Markdown widget as tokens stream in
-        # (throttled), so formatting appears instantly like Claude Code
-        # instead of only at the end.
+        # (throttled), so formatting appears instantly instead of only
+        # at the end.
         self._assistant_buf = ""
         self._last_md_flush = 0.0
         self._assistant_md = Markdown("")
@@ -1003,9 +1002,9 @@ class HellhoundApp(App):
         self._assistant_buf = ""
 
     def route_live_output(self, batch: str) -> None:
-        """A tool's live output goes INTO its card (collapsible, Claude-Code
-        style) when one is running; only genuinely top-level status lines (no
-        tool active) land in the flat transcript."""
+        """A tool's live output goes INTO its collapsible card when one is
+        running; only genuinely top-level status lines (no tool active)
+        land in the flat transcript."""
         if self._active_cards:
             try:
                 self._active_cards[-1].append_live(batch)

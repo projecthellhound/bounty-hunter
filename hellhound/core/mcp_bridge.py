@@ -54,10 +54,10 @@ from typing import Any, Callable, Dict, List, Optional
 # it fires once, from the one background task that was reading the now-
 # closed connection, and nothing restarts on its own after that (the next
 # actual reconnect only happens when a tool call or /mcp test asks for
-# one). Mirrors how Claude Code itself goes quiet rather than dumping a
-# traceback when one of ITS MCP servers drops — silence the SDK's own
-# loggers here, once, at import time, and let our own clean status
-# reporting be the only thing the researcher sees.
+# one). Go quiet rather than dumping a traceback when one of its MCP
+# servers drops — silence the SDK's own loggers here, once, at import
+# time, and let our own clean status reporting be the only thing the
+# researcher sees.
 for _mcp_logger_name in ("mcp", "mcp.client.sse", "mcp.client.stdio", "mcp.client.streamable_http"):
     _mcp_sdk_logger = logging.getLogger(_mcp_logger_name)
     _mcp_sdk_logger.setLevel(logging.CRITICAL)

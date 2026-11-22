@@ -1,7 +1,7 @@
 """
 hellhound/core/chat_ui.py
 
-Claude Code-style Terminal Chat Interface for Hellhound Bounty Hunter.
+Terminal Chat Interface for Hellhound Bounty Hunter.
 Provides a modern, double-pane dashboard card, pixel mascot, recent activity tracker,
 interactive slash command palette with live autocomplete dropdown via prompt_toolkit,
 and clean response bubbles.
@@ -342,7 +342,7 @@ class HellhoundCompleter(Completer):
 
 def render_banner_card(target_name: Optional[str] = None):
     r"""
-    Renders the Claude Code-inspired double-pane card with exact character boundaries.
+    Renders the double-pane banner card with exact character boundaries.
     """
     w = get_terminal_width()
     card_w = min(w - 4, 96)
@@ -450,7 +450,7 @@ def print_turn_separator():
 def prompt_user_input(agent, session=None, history_file: Optional[str] = None) -> Optional[str]:
     """
     Renders the input prompt inside a full-width Frame box.
-    After submission, the frame collapses to a flat '❯ input' line with Claude Code spacing.
+    After submission, the frame collapses to a flat '❯ input' line.
     """
     w = get_terminal_width()
 
@@ -651,7 +651,7 @@ class _InterruptGuard:
 
 class StreamRenderer:
     """
-    Incremental-commit markdown streaming, matching how Claude Code does it.
+    Incremental-commit markdown streaming.
 
     Content is committed PERMANENTLY to real scrollback the instant a
     paragraph finishes (a blank line, not mid-code-fence) — printed once,
@@ -840,7 +840,7 @@ class StreamRenderer:
 
 def render_response_bubble(response_text: str, sender: str = "HELLHOUND"):
     """
-    Renders AI findings and assistant responses as clean unboxed Markdown (Claude Code style).
+    Renders AI findings and assistant responses as clean unboxed Markdown.
     Used for non-streaming responses (e.g. short status messages routed through emit.__call__).
     """
     if not response_text or not response_text.strip():
@@ -857,12 +857,12 @@ def format_completion_phrase(elapsed_str: str) -> str:
 
 from hellhound.core.emit import PlainEmit
 class InteractiveAgentEmit(PlainEmit):
-    """Emit that wraps a ThinkingIndicator for live Claude Code-style feedback.
-    
+    """Emit that wraps a ThinkingIndicator for live spinner feedback.
+
     The spinner starts IMMEDIATELY on construction so the user always sees
     activity from the very first millisecond. info/warn/success/error print
-    inline alongside the running spinner (just like Claude Code does).
-    Only the final response output (__call__) kills the spinner.
+    inline alongside the running spinner. Only the final response output
+    (__call__) kills the spinner.
     """
     def __init__(self, label="Let me think"):
         super().__init__()
@@ -912,8 +912,8 @@ class InteractiveAgentEmit(PlainEmit):
 
     # ── Inline messages: print alongside the running spinner ──
     # These clear the current spinner line, print the message, then the
-    # spinner thread immediately redraws on the next tick. This gives the
-    # Claude Code live-feed look.
+    # spinner thread immediately redraws on the next tick. This gives a
+    # live-feed look where status updates never stall the spinner.
     def info(self, msg):
         if self.indicator:
             self.indicator.info(msg)
@@ -942,7 +942,7 @@ class InteractiveAgentEmit(PlainEmit):
 
 def start_chat_session(initial_target: Optional[str] = None):
     """
-    Main interactive Claude Code style REPL loop for Hellhound Bounty Hunter.
+    Main interactive REPL loop for Hellhound Bounty Hunter.
     """
     target = initial_target or "default"
     agent = get_agent(target)
@@ -975,7 +975,7 @@ def start_chat_session(initial_target: Optional[str] = None):
 
     threading.Thread(target=_warmup_ollama, daemon=True).start()
 
-    # Clear terminal cleanly for fresh Claude Code aesthetic
+    # Clear terminal cleanly for a fresh session start
     os.system("clear" if os.name == "posix" else "cls")
 
     # Render Welcome Banner Card

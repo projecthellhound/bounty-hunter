@@ -142,8 +142,8 @@ def load_config() -> Dict[str, Any]:
         # HELLHOUND_NATIVE_TOOLS_ONLY. See tool_text_fallback_enabled().
         "native_tools_only": "auto",
         # Ceiling on tool calls per user turn in Agent.handle_message()'s
-        # orchestrator loop. Kept generous (Claude-Code-CLI style — run
-        # until DONE, not until an arbitrary shallow cap) because multi-stage
+        # orchestrator loop. Kept generous — run until DONE, not until an
+        # arbitrary shallow cap — because multi-stage
         # chains (recon -> auth bypass -> IDOR -> token swap -> gowitness ->
         # record_finding) routinely need more than a handful of tool calls.
         # The loop already has its own stopping conditions (DONE, duplicate
@@ -630,7 +630,7 @@ class ThinkingIndicator:
         pass
 
     def tool_start(self, tool_name: str, args: Dict[str, Any]):
-        """Prints a Claude Code-style action bullet for tool execution."""
+        """Prints an action bullet for tool execution."""
         if self.status_callback:
             self.status_callback("tool_start", {"tool": tool_name, "args": args})
             return

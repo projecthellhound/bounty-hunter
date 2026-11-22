@@ -1543,7 +1543,7 @@ def _compute_auto_continue(
     # A generation-length truncation mid-tool-call is NEVER a deliberate stop:
     # the model intended more tool calls and the reply got cut off while emitting
     # the JSON (the "say continue to run that last one" dead-end). Auto-continue
-    # it the same way Claude Code seamlessly continues a length-capped response —
+    # it seamlessly instead of leaving a length-capped response hanging —
     # don't make the researcher type "continue". Bounded by the same streak cap.
     if truncated_tool_calls:
         return (not _looks_like_question_for_researcher(final_response)) and streak < streak_cap
@@ -14564,7 +14564,7 @@ If there is nothing worth generalizing, return an empty array: []"""
         }
 
     def _execute_delegate(self, args: Any, emit: Any = None) -> Dict[str, Any]:
-        """Run a FOCUSED sub-investigation (Claude-Code / XBOW-style subagent) in an
+        """Run a FOCUSED sub-investigation (an isolated subagent run) in an
         ISOLATED context, then hand back just its conclusion.
 
         The sub-run drives the same orchestrator loop against the SAME target — so
@@ -16156,7 +16156,7 @@ SCOPE: {scope_summary}
 FINDINGS SO FAR: {len(self.target.findings)}{artifact_block_synth}{digest_block}"""
 
         # ── Lightweight persona-only prompt for turns where no hunting tool
-        # ran (the Claude-Code-style default: most turns are just talk, not a
+        # ran (the default: most turns are just talk, not a
         # scan). No full tool schema dump, no auto-selected skill methodology
         # injection on plain chat — those only belong on turns that actually
         # do recon/exploitation work. This is what fixes both the "TARGET:
@@ -17750,7 +17750,7 @@ INSTRUCTIONS:
         _auto_continue_streak = getattr(self, "_auto_continue_streak", 0)
         # The turn ended on a generation-length truncation mid-tool-call (the
         # "say continue to run that last one" message) — detect it so the turn
-        # auto-continues instead of dead-ending, Claude-Code-style.
+        # auto-continues instead of dead-ending.
         _truncated_tool_calls = bool(re.search(
             r"cut off mid-?json|generation-length limit", str(final_response or ""), re.I))
         should_auto_continue = _compute_auto_continue(

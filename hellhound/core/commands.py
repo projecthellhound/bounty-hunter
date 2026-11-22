@@ -503,7 +503,7 @@ _HUNT_PENDING_RE = re.compile(
     r"left to test|(?:still )?to be tested|let me continue(?: testing| with)?|moving on to (?:test|the next)|"
     # a generation-length truncation mid-tool-call is NOT a deliberate stop — the
     # model intended more tool calls and got cut off, so the loop must continue
-    # (Claude-Code-style) instead of ending on a "say continue" dead-end.
+    # instead of ending on a "say continue" dead-end.
     r"cut off mid-?json|generation-length limit|didn'?t fire|say .?continue.? or", re.I)
 
 # The vuln classes a hunt must account for, and the record_finding `kind`s that

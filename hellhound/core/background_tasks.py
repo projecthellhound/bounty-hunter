@@ -2,8 +2,8 @@
 hellhound/core/background_tasks.py — fire-and-collect background tool execution.
 
 The `parallel` tool runs several tools at once but BLOCKS the turn until they all
-finish. This is the other half, inspired by how Claude Code's harness runs a long
-job detached and notifies on completion: spawn a slow tool (a full spider, a
+finish. This is the other half: a long job runs detached and notifies on
+completion. Spawn a slow tool (a full spider, a
 nuclei sweep, an authenticated content-discovery) in a daemon thread, get a
 task_id back IMMEDIATELY, keep testing other things, and collect the result on a
 later turn via `check_tasks`. Pure, thread-safe registry — the agent (which has

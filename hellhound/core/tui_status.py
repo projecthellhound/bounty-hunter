@@ -1,7 +1,7 @@
 """
 hellhound/core/tui_status.py — live "it's working" indicator for the TUI.
 
-This is the Claude Code-style animated status line: a braille spinner plus a
+This is the animated status line: a braille spinner plus a
 rotating, slightly-playful phrase ("On the hunt…", "Cooking…", "Wrapping
 up…") and an elapsed-seconds counter, so you always know a turn is actually
 running (the old prompt_toolkit UI had a spinner thread; the Textual UI gets
@@ -22,7 +22,7 @@ from typing import Optional
 from textual.widgets import Static
 
 
-# Braille spinner frames — same family Claude Code / rich use.
+# Braille spinner frames — the same family most CLI spinners use.
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 # Rotating phrases. Deliberately in loose "just starting -> deep in it ->
