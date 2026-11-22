@@ -39,37 +39,51 @@ class GuiEmit(PlainEmit):
         self.events: "queue.Queue[Dict[str, Any]]" = queue.Queue()
         self._pending_cards: Dict[str, List[str]] = {}
         self._card_ids = itertools.count(1)
+        # Set True around a slash-command dispatch so its banner/info/success
+        # lines (its only output — there's no separate return value) survive
+        # a reload; left False for free-text agent turns, whose narration is
+        # routine chatter not worth persisting.
+        self.persist_all_logs = False
 
     def _push(self, event: Dict[str, Any]) -> None:
         self.events.put(event)
 
+    def _push_log(self, kind: str, text: str) -> None:
+        # Stamp persist-worthiness at the moment the event is CREATED (this
+        # runs on the worker thread actually executing the command), not
+        # when the asyncio pump task later gets around to draining it —
+        # persist_all_logs can already have been reset by then, since the
+        # dispatch call that set it has long since returned by the time the
+        # pump task catches up. A per-event stamp can't go stale like a
+        # shared mutable flag read late can.
+        self._push({"type": "log", "kind": kind, "text": _strip_markup(text), "persist": self.persist_all_logs})
+
     # ---- plain text lines -------------------------------------------------
     def _send(self, msg):
-        self._push({"type": "log", "kind": "info", "text": _strip_markup(msg)})
+        self._push_log("info", msg)
 
     def info(self, msg):
-        self._push({"type": "log", "kind": "info", "text": _strip_markup(msg)})
+        self._push_log("info", msg)
 
     def warn(self, msg):
-        self._push({"type": "log", "kind": "warn", "text": _strip_markup(msg)})
+        self._push_log("warn", msg)
 
     warning = warn
 
     def success(self, msg):
-        self._push({"type": "log", "kind": "success", "text": _strip_markup(msg)})
+        self._push_log("success", msg)
 
     def error(self, msg):
-        self._push({"type": "log", "kind": "error", "text": _strip_markup(msg)})
+        self._push_log("error", msg)
 
     def finding(self, *args):
-        text = " ".join(map(str, args))
-        self._push({"type": "log", "kind": "finding", "text": _strip_markup(text)})
+        self._push_log("finding", " ".join(map(str, args)))
 
     def banner(self, title):
-        self._push({"type": "log", "kind": "banner", "text": _strip_markup(title)})
+        self._push_log("banner", title)
 
     def section(self, title, orbital: bool = False):
-        self._push({"type": "log", "kind": "section", "text": _strip_markup(title)})
+        self._push_log("section", title)
 
     def set_label(self, label):
         # A transient "what the agent is doing right now" label — surfaced as a

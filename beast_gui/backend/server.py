@@ -27,6 +27,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+# Every slash-command handler that might block on input() (e.g. /setup) checks
+# this exact flag to skip interactive prompts — same guard tui.py sets before
+# starting its own full-screen loop. Without it, a worker thread here would
+# hang forever waiting on a stdin read nothing will ever satisfy.
+os.environ.setdefault("BEAST_TUI", "1")
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -100,6 +106,112 @@ async def post_apikey(payload: dict):
     return {"status": "success", "provider": provider}
 
 
+@app.get("/api/commands")
+def get_commands():
+    """Registered slash commands (name/description/usage/category) for the
+    chat input's "/" picker — the exact same registry tui.py autocompletes
+    against, so the GUI never drifts from what the command layer actually
+    supports."""
+    from hellhound.core.commands import COMMAND_REGISTRY
+    seen = {}
+    for cmd in COMMAND_REGISTRY.values():
+        if cmd.name not in seen:
+            seen[cmd.name] = {
+                "name": cmd.name,
+                "aliases": cmd.aliases,
+                "description": cmd.description,
+                "usage": cmd.usage,
+                "category": cmd.category,
+            }
+    return {"commands": sorted(seen.values(), key=lambda c: (c["category"], c["name"]))}
+
+
+@app.get("/api/headers")
+def get_headers():
+    """Global custom HTTP headers — the same ~/.beast/config.json["global_headers"]
+    /headers manages, so a header set here is used on every tool's requests
+    exactly like it would be from the TUI."""
+    from hellhound.core.ai_utils import load_config
+    return {"headers": load_config().get("global_headers") or {}}
+
+
+@app.post("/api/headers")
+async def post_header(payload: dict):
+    from hellhound.core.ai_utils import load_config, save_config
+    name = str(payload.get("name", "")).strip()
+    if not name:
+        return JSONResponse({"error": "missing_name"}, status_code=400)
+    cfg = load_config()
+    headers = cfg.get("global_headers") or {}
+    headers[name] = str(payload.get("value", "")).strip()
+    cfg["global_headers"] = headers
+    save_config(cfg)
+    return {"headers": headers}
+
+
+@app.post("/api/headers/delete")
+async def delete_header(payload: dict):
+    from hellhound.core.ai_utils import load_config, save_config
+    cfg = load_config()
+    headers = cfg.get("global_headers") or {}
+    headers.pop(str(payload.get("name", "")).strip(), None)
+    cfg["global_headers"] = headers
+    save_config(cfg)
+    return {"headers": headers}
+
+
+@app.get("/api/tool-keys")
+def get_tool_keys():
+    """API keys for external recon tools (wpscan, virustotal, urlscan, ...) —
+    a separate namespace from the LLM provider keys /api/apikey manages.
+    Same resolution order the tool executors themselves use (tool_api_keys ->
+    LLM api_keys bucket -> env var), via commands.py's own helpers so this
+    never drifts from what /apikey already reports."""
+    from hellhound.core.ai_utils import load_config
+    from hellhound.core.commands import KNOWN_TOOL_API_KEYS, _resolve_tool_key, _mask_secret
+    cfg = load_config()
+    tool_keys = cfg.get("tool_api_keys") or {}
+    api_keys = cfg.get("api_keys") or {}
+    names = sorted(set(KNOWN_TOOL_API_KEYS) | set(tool_keys))
+    tools = []
+    for name in names:
+        val, source = _resolve_tool_key(name, tool_keys, api_keys)
+        tools.append({
+            "tool": name,
+            "set": bool(val),
+            "masked": _mask_secret(str(val)) if val else None,
+            "source": source,
+            "hint": KNOWN_TOOL_API_KEYS.get(name, ""),
+        })
+    return {"tools": tools}
+
+
+@app.post("/api/tool-keys")
+async def post_tool_key(payload: dict):
+    from hellhound.core.ai_utils import load_config, save_config
+    tool = str(payload.get("tool", "")).strip().lower()
+    value = str(payload.get("value", "")).strip()
+    if not tool or not value:
+        return JSONResponse({"error": "missing_tool_or_value"}, status_code=400)
+    cfg = load_config()
+    tool_keys = cfg.get("tool_api_keys") or {}
+    tool_keys[tool] = value
+    cfg["tool_api_keys"] = tool_keys
+    save_config(cfg)
+    return {"status": "success", "tool": tool}
+
+
+@app.post("/api/tool-keys/delete")
+async def delete_tool_key(payload: dict):
+    from hellhound.core.ai_utils import load_config, save_config
+    cfg = load_config()
+    tool_keys = cfg.get("tool_api_keys") or {}
+    tool_keys.pop(str(payload.get("tool", "")).strip().lower(), None)
+    cfg["tool_api_keys"] = tool_keys
+    save_config(cfg)
+    return {"status": "success"}
+
+
 @app.get("/api/models")
 def get_models():
     from hellhound.core.ai_utils import list_available_models
@@ -111,9 +223,13 @@ def get_models():
 
 # ── targets / findings / reports ──────────────────────────────────────────
 def _list_targets():
+    """list_targets(exclude_default=True) also drops every dotless name
+    (e.g. 'localhost', a real target with real findings) — too blunt for the
+    GUI's sidebar. Fetch everything and hide only the literal 'default'
+    scratch bucket, the one entry that's never a real engagement."""
     from hellhound.core.tasks import list_targets, is_target_private
     try:
-        return [t for t in list_targets(exclude_default=False) if not is_target_private(t)]
+        return [t for t in list_targets(exclude_default=False) if t != "default" and not is_target_private(t)]
     except Exception:
         return []
 
@@ -273,7 +389,16 @@ async def _pump_events(ws: WebSocket, gui_emit: GuiEmit, stop: asyncio.Event, cu
                     break
         elif etype == "log":
             lkind = event.get("kind")
-            if lkind in ("finding", "error"):
+            # findings/errors always persist; a slash command's own output
+            # (banner/info/success/warn/section — there's no separate
+            # "result" object, the log lines ARE the answer) persists only
+            # when GuiEmit stamped it "persist" at push-time (set while
+            # persist_all_logs was True for that turn) — NOT by re-checking
+            # gui_emit.persist_all_logs here, since that flag is long since
+            # reset by the time this queue-draining loop catches up to an
+            # event a burst of dispatch() output pushed moments earlier.
+            if lkind in ("finding", "error") or (event.get("persist") and lkind in
+                    ("info", "success", "warn", "banner", "section")):
                 current_entries.append({
                     "kind": "log",
                     "logKind": lkind,
@@ -314,18 +439,56 @@ async def ws_endpoint(ws: WebSocket):
     async def _send_findings():
         await ws.send_json({"type": "findings", "target": agent.target.name, "list": _findings_for(agent.target.name)})
 
+    async def _resync_target_if_changed(new_target):
+        """A slash command (e.g. /target, /recon <other-site>) can repoint
+        session_context['target'] at a different target than the one this
+        connection had active — same resync tui.py/chat_ui.py do right after
+        dispatch() returns, extended to also swap the GUI's loaded history."""
+        nonlocal agent, active_target_name, active_entries
+        if not new_target or new_target == active_target_name:
+            return
+        _save_chat_history(active_target_name, active_entries)
+        agent = get_agent(new_target)
+        active_target_name = new_target
+        active_entries.clear()
+        active_entries.extend(_load_chat_history(new_target))
+        await ws.send_json({"type": "targets", "list": _list_targets()})
+        await ws.send_json({"type": "chat_history", "target": new_target, "entries": active_entries})
+
+    async def _run_slash(text: str, session_context: dict):
+        """Routes a "/"-prefixed message through the exact same central
+        dispatcher (hellhound.core.commands.dispatch) the TUI and classic
+        REPL use, instead of free-texting it at the agent — so /scope,
+        /recon, /program, /loot, /mcp etc. actually work from the GUI."""
+        from hellhound.core.commands import dispatch as commands_dispatch
+        gui_emit.persist_all_logs = True
+        try:
+            result = await loop.run_in_executor(
+                None, lambda: commands_dispatch(text, session_context, emit=gui_emit)
+            )
+        finally:
+            gui_emit.persist_all_logs = False
+        await _resync_target_if_changed(session_context.get("target"))
+        if isinstance(result, dict):
+            return result.get("advice") or result.get("response")
+        return result if isinstance(result, str) else None
+
     async def run_turn(text: str):
         nonlocal active_entries
         # Record user turn into persistent history
-        active_entries.append({"kind": "log", "logKind": "banner", "text": f"❯ {text}"})
+        active_entries.append({"kind": "log", "logKind": "user_echo", "text": text})
         _save_chat_history(active_target_name, active_entries)
 
         session_context = {"target": agent.target.name,
                            "scope_rules": getattr(agent.target, "scope_rules", None)}
+        is_slash = text.strip().startswith("/")
         try:
-            final_response = await loop.run_in_executor(
-                None, lambda: agent.handle_message(text, session_context=session_context, emit=gui_emit)
-            )
+            if is_slash:
+                final_response = await _run_slash(text, session_context)
+            else:
+                final_response = await loop.run_in_executor(
+                    None, lambda: agent.handle_message(text, session_context=session_context, emit=gui_emit)
+                )
         except Exception as exc:
             err_msg = f"{type(exc).__name__}: {exc}"
             active_entries.append({"kind": "log", "logKind": "error", "text": err_msg})
@@ -341,8 +504,10 @@ async def ws_endpoint(ws: WebSocket):
                             "auto_continue": bool(getattr(agent, "_last_turn_auto_continue", False))})
         await _send_findings()
 
-        # Same auto-continue loop as tui.py / chat_ui.py.
-        while getattr(agent, "_last_turn_auto_continue", False):
+        # Same auto-continue loop as tui.py / chat_ui.py — only for free-text
+        # hunting turns; a slash command's own handler already ran any
+        # continuation it needed to completion before dispatch() returned.
+        while (not is_slash) and getattr(agent, "_last_turn_auto_continue", False):
             await ws.send_json({"type": "turn_status", "text": "Still mid-investigation — continuing on its own…"})
             try:
                 final_response = await loop.run_in_executor(

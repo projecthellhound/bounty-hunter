@@ -48,6 +48,14 @@ interface Finding {
   report: string | null;
 }
 
+interface CommandMeta {
+  name: string;
+  aliases: string[];
+  description: string;
+  usage: string;
+  category: string;
+}
+
 interface Config {
   orchestrator_provider: string;
   orchestrator_model: string;
@@ -108,10 +116,11 @@ function normalizeEntry(item: any): Entry {
     };
   }
   if (item.kind === "log") {
-    // If it's a user banner line, convert to a clean user message
-    if (item.logKind === "banner") {
-      const clean = item.text.startsWith("❯ ") ? item.text.slice(2) : item.text;
-      return { kind: "user", text: clean };
+    // The server's own echo of what the user typed — distinct from a
+    // command's real banner output (e.g. /skills' library header), which
+    // must stay a log line, not masquerade as something the user said.
+    if (item.logKind === "user_echo") {
+      return { kind: "user", text: item.text || "" };
     }
     // If it's a turn end success message, convert to assistant message
     if (item.logKind === "success" && (item.text.length > 80 || item.text.includes("\n") || /\*\*|`/.test(item.text))) {
@@ -136,9 +145,12 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [report, setReport] = useState<{ title: string; file: string } | null>(null);
   const [userScrolled, setUserScrolled] = useState(false);
+  const [commands, setCommands] = useState<CommandMeta[]>([]);
+  const [cmdHighlight, setCmdHighlight] = useState(0);
 
   const wsRef = useRef<WebSocket | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const pushEntry = useCallback((e: Entry) => setEntries((prev) => [...prev, e]), []);
 
@@ -164,10 +176,10 @@ export default function App() {
             }
             break;
           case "log":
-            if (msg.kind === "banner") {
-              const clean = msg.text.startsWith("❯ ") ? msg.text.slice(2) : msg.text;
-              pushEntry({ kind: "user", text: clean });
-            } else {
+            // The user's own message is already shown optimistically by
+            // send() below — the server's user_echo exists only so history
+            // replay (chat_history) can reconstruct it later, never live.
+            if (msg.kind !== "user_echo") {
               pushEntry({ kind: "log", logKind: msg.kind, text: msg.text });
             }
             break;
@@ -204,6 +216,35 @@ export default function App() {
     connect();
     return () => { closed = true; wsRef.current?.close(); };
   }, [pushEntry]);
+
+  useEffect(() => {
+    fetch(`${API}/api/commands`).then((r) => r.json()).then((d) => setCommands(d.commands || [])).catch(() => {});
+  }, []);
+
+  // Slash-command picker: live while the user is still typing the command
+  // token itself ("/" with no space yet) — same idea as the TARGETS list,
+  // but for the ~45 commands commands.py registers, so nobody has to
+  // memorize /recon, /scope, /program, /loot, /mcp... to use them.
+  const slashToken = /^\/(\S*)$/.exec(input.split(" ")[0] ?? "");
+  const slashActive = input.startsWith("/") && !input.includes(" ");
+  const slashFiltered = slashActive
+    ? commands.filter((c) => {
+        const q = (slashToken?.[1] || "").toLowerCase();
+        return !q || c.name.toLowerCase().includes(q) || c.aliases.some((a) => a.toLowerCase().includes(q));
+      }).slice(0, 8)
+    : [];
+
+  useEffect(() => { setCmdHighlight(0); }, [input]);
+
+  // "default" is the real bucket name the backend uses before any target has
+  // been picked — a storage detail, not something to show as if it were an
+  // actual engagement.
+  const hasTarget = !!activeTarget && activeTarget !== "default";
+
+  const pickCommand = useCallback((c: CommandMeta) => {
+    setInput(c.name + " ");
+    inputRef.current?.focus();
+  }, []);
 
   // Detect user scrolling up so we don't snap back on them
   const handleLogScroll = useCallback(() => {
@@ -323,7 +364,7 @@ export default function App() {
             </button>
           )}
           <div className="tb-target">
-            <span className="target-badge">{activeTarget}</span>
+            <span className={`target-badge ${hasTarget ? "" : "unset"}`}>{hasTarget ? activeTarget : "No target yet"}</span>
           </div>
           <div className="tb-meta">
             {findings.length > 0 && (
@@ -349,15 +390,32 @@ export default function App() {
           {entries.length === 0 && (
             <div className="chat-empty-state">
               <img className="empty-logo" src={logo} alt="Beast" />
-              <h2>BEAST Autonomous Hunting Console</h2>
-              <p>Target: <strong>{activeTarget}</strong>. Enter an instruction to begin testing.</p>
+              <h2>BEAST</h2>
+              <p>
+                {hasTarget
+                  ? <>Target: <strong>{activeTarget}</strong>. Tell me what to go after.</>
+                  : "Point me at a domain, or pick an existing engagement from the sidebar."}
+              </p>
               <div className="empty-suggestions">
-                <button onClick={() => setInput(`recon ${activeTarget} and discover endpoints`)}>
-                  <code>recon {activeTarget} and discover endpoints</code>
-                </button>
-                <button onClick={() => setInput(`check ${activeTarget} for IDOR and access control issues`)}>
-                  <code>check {activeTarget} for IDOR and access control issues</code>
-                </button>
+                {hasTarget ? (
+                  <>
+                    <button onClick={() => setInput(`recon ${activeTarget} and discover endpoints`)}>
+                      <code>recon {activeTarget} and discover endpoints</code>
+                    </button>
+                    <button onClick={() => setInput(`check ${activeTarget} for IDOR and access control issues`)}>
+                      <code>check {activeTarget} for IDOR and access control issues</code>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => { setInput("recon "); inputRef.current?.focus(); }}>
+                      <code>recon &lt;domain&gt;</code>
+                    </button>
+                    <button onClick={() => { setInput("/program "); inputRef.current?.focus(); }}>
+                      <code>/program list</code>
+                    </button>
+                  </>
+                )}
                 <button onClick={() => setInput("what did we find so far?")}>
                   <code>what did we find so far?</code>
                 </button>
@@ -377,22 +435,54 @@ export default function App() {
           )}
         </div>
 
-        <div className="composer">
-          <textarea
-            value={input}
-            placeholder={busy ? "Hunting in progress… (you can queue more instructions)" : `Message BEAST about ${activeTarget}…`}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            rows={1}
-          />
-          <button className="send" onClick={send} disabled={!connected || !input.trim()}>
-            {busy ? "…" : "Send"}
-          </button>
+        <div className="composer-area">
+          {slashActive && slashFiltered.length > 0 && (
+            <div className="slash-popup">
+              {slashFiltered.map((c, i) => (
+                <button
+                  key={c.name}
+                  className={`slash-item ${i === cmdHighlight ? "highlight" : ""}`}
+                  onClick={() => pickCommand(c)}
+                  onMouseEnter={() => setCmdHighlight(i)}
+                >
+                  <span className="slash-name">{c.name}</span>
+                  <span className="slash-cat">{c.category}</span>
+                  <span className="slash-desc">{c.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="composer">
+            <button
+              className="slash-trigger"
+              title="Browse slash commands"
+              onClick={() => { setInput("/"); inputRef.current?.focus(); }}
+            >
+              /
+            </button>
+            <textarea
+              ref={inputRef}
+              value={input}
+              placeholder={busy ? "Hunting in progress… (you can queue more instructions)" : hasTarget ? `Message BEAST about ${activeTarget}… ("/" for commands)` : `Message BEAST… ("/" for commands)`}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (slashActive && slashFiltered.length > 0) {
+                  if (e.key === "ArrowDown") { e.preventDefault(); setCmdHighlight((h) => (h + 1) % slashFiltered.length); return; }
+                  if (e.key === "ArrowUp") { e.preventDefault(); setCmdHighlight((h) => (h - 1 + slashFiltered.length) % slashFiltered.length); return; }
+                  if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); pickCommand(slashFiltered[cmdHighlight]); return; }
+                  if (e.key === "Escape") { e.preventDefault(); setInput(""); return; }
+                }
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              rows={1}
+            />
+            <button className="send" onClick={send} disabled={!connected || !input.trim()}>
+              {busy ? "…" : "Send"}
+            </button>
+          </div>
         </div>
       </main>
 
@@ -528,25 +618,57 @@ function ReportModal({ title, src, onClose }: { title: string; src: string; onCl
   );
 }
 
+interface ToolKey {
+  tool: string;
+  set: boolean;
+  masked: string | null;
+  source: string | null;
+  hint: string;
+}
+
+const SETTINGS_TABS = ["models", "llm-keys", "tool-keys", "profile", "behavior"] as const;
+type SettingsTab = (typeof SETTINGS_TABS)[number];
+const SETTINGS_TAB_LABELS: Record<SettingsTab, string> = {
+  "models": "Models",
+  "llm-keys": "LLM API Keys",
+  "tool-keys": "Recon Tool Keys",
+  "profile": "Handle & Headers",
+  "behavior": "Behavior",
+};
+
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const [cfg, setCfg] = useState<Config | null>(null);
-  const [tab, setTab] = useState<"models" | "keys" | "behavior">("models");
+  const [tab, setTab] = useState<SettingsTab>("models");
   const [keyProvider, setKeyProvider] = useState<string>("nvidia");
   const [keyValue, setKeyValue] = useState("");
   const [saved, setSaved] = useState("");
 
+  const [toolKeys, setToolKeys] = useState<ToolKey[]>([]);
+  const [newTool, setNewTool] = useState("");
+  const [newToolValue, setNewToolValue] = useState("");
+
+  const [headers, setHeaders] = useState<Record<string, string>>({});
+  const [newHeaderName, setNewHeaderName] = useState("");
+  const [newHeaderValue, setNewHeaderValue] = useState("");
+
   useEffect(() => {
     fetch(`${API}/api/config`).then((r) => r.json()).then(setCfg).catch(() => setCfg(null));
+    refreshToolKeys();
+    refreshHeaders();
   }, []);
 
+  const refreshToolKeys = () => fetch(`${API}/api/tool-keys`).then((r) => r.json()).then((d) => setToolKeys(d.tools || [])).catch(() => {});
+  const refreshHeaders = () => fetch(`${API}/api/headers`).then((r) => r.json()).then((d) => setHeaders(d.headers || {})).catch(() => {});
+
   const patch = (p: Partial<Config>) => setCfg((c) => (c ? { ...c, ...p } : c));
+  const flash = (msg: string) => { setSaved(msg); setTimeout(() => setSaved(""), 1500); };
 
   const saveConfig = async () => {
     if (!cfg) return;
     const r = await fetch(`${API}/api/config`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cfg),
     });
-    setCfg(await r.json()); setSaved("saved ✓"); setTimeout(() => setSaved(""), 1500);
+    setCfg(await r.json()); flash("saved ✓");
   };
 
   const saveKey = async () => {
@@ -555,9 +677,44 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ provider: keyProvider, key: keyValue }),
     });
-    setKeyValue(""); setSaved(`${keyProvider} key saved ✓`);
+    setKeyValue(""); flash(`${keyProvider} key saved ✓`);
     const r = await fetch(`${API}/api/config`); setCfg(await r.json());
-    setTimeout(() => setSaved(""), 1500);
+  };
+
+  const saveToolKey = async (tool: string, value: string) => {
+    if (!tool.trim() || !value.trim()) return;
+    await fetch(`${API}/api/tool-keys`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tool, value }),
+    });
+    setNewTool(""); setNewToolValue(""); flash(`${tool} key saved ✓`);
+    refreshToolKeys();
+  };
+
+  const clearToolKey = async (tool: string) => {
+    await fetch(`${API}/api/tool-keys/delete`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tool }),
+    });
+    flash(`${tool} key cleared`);
+    refreshToolKeys();
+  };
+
+  const saveHeader = async () => {
+    if (!newHeaderName.trim()) return;
+    await fetch(`${API}/api/headers`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: newHeaderName, value: newHeaderValue }),
+    });
+    setNewHeaderName(""); setNewHeaderValue(""); flash("header saved ✓");
+    refreshHeaders();
+  };
+
+  const deleteHeader = async (name: string) => {
+    await fetch(`${API}/api/headers/delete`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }),
+    });
+    flash("header removed");
+    refreshHeaders();
   };
 
   return (
@@ -565,9 +722,9 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head"><span>Settings</span><button onClick={onClose}>✕</button></div>
         <div className="modal-tabs">
-          {(["models", "keys", "behavior"] as const).map((t) => (
+          {SETTINGS_TABS.map((t) => (
             <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-              {t === "models" ? "Models" : t === "keys" ? "API Keys" : "Behavior"}
+              {SETTINGS_TAB_LABELS[t]}
             </button>
           ))}
         </div>
@@ -589,8 +746,9 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
               </Field>
             </>
           )}
-          {cfg && tab === "keys" && (
+          {cfg && tab === "llm-keys" && (
             <>
+              <p className="settings-hint">Keys for the model providers powering the orchestrator/synthesizer.</p>
               <div className="key-status">
                 {PROVIDERS.filter((p) => p !== "ollama").map((p) => (
                   <span key={p} className={`chip ${cfg.configured_providers.includes(p) ? "on" : ""}`}>
@@ -609,9 +767,59 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
               <button className="primary" onClick={saveKey}>Save key</button>
             </>
           )}
+          {tab === "tool-keys" && (
+            <>
+              <p className="settings-hint">Keys for external recon tools — separate from the LLM provider keys above. Saved once, reused on every future target.</p>
+              <div className="kv-list">
+                {toolKeys.map((tk) => (
+                  <div key={tk.tool} className="kv-row">
+                    <span className="kv-key">{tk.tool}</span>
+                    {tk.set ? (
+                      <>
+                        <span className="kv-val masked">{tk.masked}{tk.source && tk.source !== "/apikey" ? ` (via ${tk.source})` : ""}</span>
+                        <button className="kv-del" onClick={() => clearToolKey(tk.tool)}>clear</button>
+                      </>
+                    ) : (
+                      <span className="kv-val unset" title={tk.hint}>unset{tk.hint ? ` — ${tk.hint}` : ""}</span>
+                    )}
+                  </div>
+                ))}
+                {toolKeys.length === 0 && <div className="empty">loading…</div>}
+              </div>
+              <div className="kv-add">
+                <input placeholder="tool (e.g. wpscan)" value={newTool} onChange={(e) => setNewTool(e.target.value)} />
+                <input type="password" placeholder="key" value={newToolValue} onChange={(e) => setNewToolValue(e.target.value)} />
+                <button className="primary" onClick={() => saveToolKey(newTool, newToolValue)}>Add</button>
+              </div>
+            </>
+          )}
+          {tab === "profile" && (
+            <>
+              {cfg && (
+                <Field label="Researcher handle (X-Bugbounty header + sign-off)">
+                  <input value={cfg.researcher_handle} onChange={(e) => patch({ researcher_handle: e.target.value })} />
+                </Field>
+              )}
+              <p className="settings-hint">Custom HTTP headers sent with every outgoing request (e.g. program-required auth tokens).</p>
+              <div className="kv-list">
+                {Object.entries(headers).map(([name, value]) => (
+                  <div key={name} className="kv-row">
+                    <span className="kv-key">{name}</span>
+                    <span className="kv-val">{value}</span>
+                    <button className="kv-del" onClick={() => deleteHeader(name)}>remove</button>
+                  </div>
+                ))}
+                {Object.keys(headers).length === 0 && <div className="empty">no custom headers set</div>}
+              </div>
+              <div className="kv-add">
+                <input placeholder="Header-Name" value={newHeaderName} onChange={(e) => setNewHeaderName(e.target.value)} />
+                <input placeholder="value" value={newHeaderValue} onChange={(e) => setNewHeaderValue(e.target.value)} />
+                <button className="primary" onClick={saveHeader}>Add</button>
+              </div>
+            </>
+          )}
           {cfg && tab === "behavior" && (
             <>
-              <Field label="Researcher handle"><input value={cfg.researcher_handle} onChange={(e) => patch({ researcher_handle: e.target.value })} /></Field>
               <Field label="Fuzz rate limit (req/s)"><input type="number" value={cfg.fuzz_rate_limit} onChange={(e) => patch({ fuzz_rate_limit: Number(e.target.value) })} /></Field>
               <Field label="Max agent iterations"><input type="number" value={cfg.max_agent_iterations} onChange={(e) => patch({ max_agent_iterations: Number(e.target.value) })} /></Field>
               <label className="check"><input type="checkbox" checked={cfg.auto_install_missing_tools} onChange={(e) => patch({ auto_install_missing_tools: e.target.checked })} /> Auto-install missing tools</label>
@@ -621,7 +829,9 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         </div>
         <div className="modal-foot">
           <span className="saved">{saved}</span>
-          {tab !== "keys" && <button className="primary" onClick={saveConfig} disabled={!cfg}>Save</button>}
+          {(tab === "models" || tab === "profile" || tab === "behavior") && (
+            <button className="primary" onClick={saveConfig} disabled={!cfg}>Save</button>
+          )}
         </div>
       </div>
     </div>
