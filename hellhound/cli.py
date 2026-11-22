@@ -61,18 +61,20 @@ def _configure_logging():
 @click.option("--print", "-p", "print_cmd", default=None, help="Execute a slash command in headless mode and print output")
 @click.option("--json", "-j", "json_output", is_flag=True, default=False, help="Force structured JSON output for automation")
 @click.option("--classic", is_flag=True, default=False, help="Launch the classic prompt_toolkit console instead of the Textual TUI")
-@click.option("--gui", is_flag=True, default=False, help="Launch the browser GUI (Claude-Code-style) instead of the terminal TUI")
-@click.option("--no-browser", is_flag=True, default=False, help="With --gui, start the backend but don't auto-open a browser tab")
+@click.option("--gui", is_flag=True, default=False, help="Launch the GUI (Claude-Code-style) as a native desktop-app window")
+@click.option("--web", is_flag=True, default=False, help="With --gui, open in a browser tab instead of a native window (for headless/SSH)")
+@click.option("--no-browser", is_flag=True, default=False, help="With --gui --web, start the backend but don't auto-open a browser tab")
 @click.version_option("12.7.0", prog_name="HELLHOUND")
 @click.pass_context
-def cli(ctx, print_cmd, json_output, classic, gui, no_browser):
+def cli(ctx, print_cmd, json_output, classic, gui, web, no_browser):
     """
     BEAST (Bounty Hunter) — Project Hellhound's autonomous bug bounty recon & triage AI
 
     Run without arguments to launch the interactive chat console.
 
       beast                     → interactive Textual TUI
-      beast --gui               → browser GUI (Claude-Code-style)
+      beast --gui               → native desktop-app window (Claude-Code-style)
+      beast --gui --web         → same GUI in a browser tab (headless/SSH)
       beast --classic           → classic prompt_toolkit console
       beast --print "/scope show --json"
       beast -p "/recon example.com"
@@ -83,7 +85,7 @@ def cli(ctx, print_cmd, json_output, classic, gui, no_browser):
 
     if ctx.invoked_subcommand is None:
         if gui:
-            _launch_gui(open_browser=not no_browser)
+            _launch_gui(web=web, open_browser=not no_browser)
         else:
             _launch_console(classic=classic)
 
@@ -269,9 +271,11 @@ def _launch_console(classic: bool = False):
         sys.exit(1)
 
 
-def _launch_gui(open_browser: bool = True):
-    """Launch the browser GUI: the FastAPI backend (beast_gui/backend/server.py)
-    serving the built React frontend, then open a browser tab pointed at it.
+def _launch_gui(web: bool = False, open_browser: bool = True):
+    """Launch the GUI over the FastAPI backend (beast_gui/backend/server.py),
+    which serves the built React frontend. By default this opens a NATIVE
+    desktop-app window (WebKit2GTK via pywebview) so it feels like an app, not a
+    website; `--web` opens it in a browser tab instead (headless/SSH).
 
     The backend is the SAME process that drives real hunts — it wraps
     hellhound.core.agent.get_agent / handle_message exactly like the TUI, so
@@ -312,8 +316,25 @@ def _launch_gui(open_browser: bool = True):
 
     port = int(os.environ.get("BEAST_GUI_PORT", "8787"))
     url = f"http://127.0.0.1:{port}"
-    click.echo(f"[+] BEAST GUI → {url}  (Ctrl-C to stop)")
 
+    # Default: a native desktop-app window. Falls through to web mode if there's
+    # no usable webview backend (headless box, no pywebview, SSH without X).
+    if not web:
+        try:
+            from beast_gui.backend.server import run_desktop
+            click.echo(f"[+] BEAST GUI — opening a desktop window ({url})")
+            if run_desktop(title="BEAST"):
+                return
+            click.echo("[!] No native webview backend available; falling back to a browser tab.")
+            click.echo("    (For a real app window: pip install pywebview + a WebKit2GTK/Qt backend.)")
+        except KeyboardInterrupt:
+            click.echo("\n[+] GUI stopped.")
+            sys.exit(0)
+        except Exception as e:
+            click.echo(f"[!] Desktop window unavailable ({e}); falling back to a browser tab.")
+
+    # Web mode: serve and (optionally) open the default browser.
+    click.echo(f"[+] BEAST GUI → {url}  (Ctrl-C to stop)")
     if open_browser:
         import threading
         import webbrowser

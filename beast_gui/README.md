@@ -1,9 +1,14 @@
 # BEAST GUI
 
-A browser front-end for BEAST, in the spirit of Claude Code: a working-log
-transcript in the middle, collapsible tool cards, a targets rail on the left,
-and a findings rail on the right that can render BEAST's own HTML reports
-inline.
+A desktop-app front-end for BEAST, in the spirit of Claude Code / Caido / Burp:
+a native window (not a browser tab) with a working-log transcript in the middle,
+collapsible tool cards, a targets rail on the left, and a findings rail on the
+right that can render BEAST's own HTML reports inline.
+
+Under the hood it's a local FastAPI + React app rendered inside a native OS
+window (WebKit2GTK via **pywebview**). `beast --gui` opens the window;
+`beast --gui --web` opens the same app in a browser tab instead (for headless /
+SSH boxes, or if no webview backend is installed).
 
 It is **not** a second agent. The backend is a thin WebSocket wrapper around
 the exact same `hellhound.core.agent.get_agent` / `Agent.handle_message`
@@ -27,16 +32,22 @@ beast_gui/
 pip install -e '.[gui]'
 cd beast_gui/frontend && npm install && npm run build && cd -
 
-# launch (opens http://127.0.0.1:8787 in your browser)
+# launch as a native desktop window
 beast --gui
 ```
 
-`beast` with no flag is still the terminal TUI; `beast --classic` is still the
-classic console. `beast --gui --no-browser` starts the backend without opening
-a tab. Port is overridable with `BEAST_GUI_PORT`.
+On Linux the native window needs a WebKit2GTK backend
+(`libwebkit2gtk-4.1-0` + PyGObject, usually already present on a desktop). If
+none is available, `beast --gui` automatically falls back to a browser tab.
 
-The desktop launcher (`packaging/beast.desktop`) opens the GUI on double-click;
-its right-click "Open terminal console (TUI)" action opens the terminal UI.
+`beast` with no flag is still the terminal TUI; `beast --classic` is still the
+classic console. `beast --gui --web` forces browser-tab mode; add
+`--no-browser` to start the backend without opening a tab. Port is overridable
+with `BEAST_GUI_PORT`.
+
+The desktop launcher (`packaging/beast.desktop`) opens the GUI window on
+double-click; its right-click "Open terminal console (TUI)" action opens the
+terminal UI.
 
 ## Develop the frontend
 

@@ -28,6 +28,10 @@ setup(
             "fastapi>=0.110",
             "uvicorn>=0.27",
             "websockets>=12",
+            # Native desktop-app window (`beast --gui`). On Linux it uses the
+            # system WebKit2GTK backend; falls back to a browser tab if no
+            # webview backend is present (headless/SSH).
+            "pywebview>=5",
         ],
     },
     entry_points={

@@ -2,7 +2,7 @@
 Type=Application
 Name=Beast
 GenericName=Bug Bounty Reconnaissance & Triage Framework
-Comment=Autonomous AI bug bounty recon & triage assistant — opens the browser GUI
+Comment=Autonomous AI bug bounty recon & triage assistant — opens the desktop GUI
 Exec=beast --gui
 Icon=beast
 Terminal=false

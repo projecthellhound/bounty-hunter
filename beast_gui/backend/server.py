@@ -302,10 +302,74 @@ if _FRONTEND_DIST.is_dir():
     app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="frontend")
 
 
-def main():
+def _resolve_port() -> int:
+    return int(os.environ.get("BEAST_GUI_PORT", "8787"))
+
+
+def _build_server(port: int):
+    """A uvicorn Server we can drive ourselves (so the desktop-app window can run
+    it on a background thread and shut it down when the window closes)."""
     import uvicorn
-    port = int(os.environ.get("BEAST_GUI_PORT", "8787"))
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    return uvicorn.Server(config)
+
+
+def _wait_until_up(port: int, timeout: float = 15.0) -> bool:
+    import socket
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with socket.socket() as s:
+            s.settimeout(0.25)
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                return True
+        time.sleep(0.1)
+    return False
+
+
+def main():
+    """Headless/web mode: just serve. A browser (or the --web CLI path) points at it."""
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=_resolve_port(), log_level="warning")
+
+
+def run_desktop(title: str = "BEAST") -> bool:
+    """Native desktop-app window over the local server — the same FastAPI+React
+    app, but in an OS window (WebKit2GTK via pywebview) instead of a browser tab,
+    so it feels like Claude Code / Caido / Burp rather than a website.
+
+    uvicorn runs on a daemon thread; pywebview owns the main thread (the GTK
+    backend requires it). Returns False if no native webview backend is
+    available, so the caller can fall back to opening a browser.
+    """
+    try:
+        import webview
+        from webview.guilib import initialize
+        initialize()  # raises if no GTK/Qt/… backend is usable (e.g. headless)
+    except Exception:
+        return False
+
+    import threading
+
+    port = _resolve_port()
+    server = _build_server(port)
+    t = threading.Thread(target=server.run, daemon=True)
+    t.start()
+
+    if not _wait_until_up(port):
+        server.should_exit = True
+        return False
+
+    webview.create_window(
+        title,
+        f"http://127.0.0.1:{port}",
+        width=1280,
+        height=820,
+        min_size=(900, 600),
+    )
+    webview.start()  # blocks until the window is closed
+    server.should_exit = True
+    return True
 
 
 if __name__ == "__main__":
