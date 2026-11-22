@@ -79,6 +79,26 @@ function curve(ax: number, ay: number, bx: number, by: number, pull: number): [n
   return [ax, ay, ((ax + bx) / 2) * (1 - pull), ((ay + by) / 2) * (1 - pull), bx, by];
 }
 
+/** Narrows the whole-Beast graph down to one target's own slice — a view
+ * filter the Knowledge Graph applies client-side, entirely independent of
+ * whatever the sidebar happens to have active. Hub counts are recomputed
+ * from the filtered findings, not copied from the global totals. */
+export function subgraph(data: GraphData, targetId: string | null): GraphData {
+  if (!targetId) return data;
+  const findings = data.findings.filter((f) => f.target === targetId);
+  const hostIds = new Set(findings.flatMap((f) => f.hosts));
+  const counts = new Map<string, number>();
+  for (const f of findings) counts.set(f.hub, (counts.get(f.hub) || 0) + 1);
+  return {
+    center: data.targets.find((t) => t.id === targetId)?.label || data.center,
+    targets: data.targets.filter((t) => t.id === targetId),
+    hubs: data.hubs.filter((h) => counts.has(h.id)).map((h) => ({ ...h, count: counts.get(h.id)! })),
+    findings,
+    hosts: data.hosts.filter((h) => hostIds.has(h.id)),
+    artifacts: data.artifacts.filter((a) => a.target === targetId),
+  };
+}
+
 export function buildLayout(data: GraphData): Layout {
   // 1. Targets: one at the very center, or — in a program view — several on
   // a small inner ring, so chat's "which target" and the graph's "whole

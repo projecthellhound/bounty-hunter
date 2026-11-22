@@ -477,7 +477,7 @@ export default function App() {
 
         {navView === "graph" ? (
           <KnowledgeGraph
-            scope={scope}
+            activeTarget={hasTarget ? activeTarget : undefined}
             apiBase={API}
             onViewReport={(title, file, target) => setReport({ title, file, target })}
           />

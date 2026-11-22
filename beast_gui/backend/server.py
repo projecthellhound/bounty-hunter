@@ -407,9 +407,17 @@ def _graph_for_targets(center_label: str, target_names: list) -> dict:
 
 @app.get("/api/graph")
 def get_graph(target: str = "", program: str = ""):
+    """With no target/program given, this is the whole-Beast knowledge graph —
+    every target it has ever recorded findings for, merged into one ring by
+    finding kind. It deliberately does NOT default to whatever target/program
+    happens to be selected in the sidebar: the graph is the accumulated
+    picture across everything, not a per-engagement view that goes empty the
+    moment nothing is active."""
     if program:
         return _graph_for_targets(program, _program_target_names(program))
-    return _graph_for_targets(target, [target] if target else [])
+    if target:
+        return _graph_for_targets(target, [target])
+    return _graph_for_targets("All Programs", _list_targets())
 
 
 # ── chat history persistence per target ────────────────────────────────────
