@@ -260,8 +260,42 @@ def _findings_for(target_name: str) -> list:
     return out
 
 
+def _program_target_names(program_name: str) -> list:
+    from hellhound.core.tasks import list_program_targets
+    try:
+        return list_program_targets(program_name)
+    except Exception:
+        return []
+
+
+@app.get("/api/programs")
+def get_programs():
+    """Every non-private program and its member targets — the same
+    program.json records /program already maintains — so the sidebar can
+    group targets under the engagement they belong to instead of a flat
+    list."""
+    from hellhound.core.tasks import list_programs, load_program
+    out = []
+    for name in list_programs():
+        record = load_program(name) or {}
+        if record.get("private"):
+            continue
+        out.append({
+            "name": name,
+            "display_name": record.get("display_name") or name,
+            "targets": record.get("targets") or [],
+        })
+    return {"programs": out}
+
+
 @app.get("/api/findings")
-def get_findings(target: str):
+def get_findings(target: str = "", program: str = ""):
+    if program:
+        merged = []
+        for t in _program_target_names(program):
+            for f in _findings_for(t):
+                merged.append({**f, "target": t})
+        return {"program": program, "findings": merged}
     return {"target": target, "findings": _findings_for(target)}
 
 
@@ -286,45 +320,96 @@ def get_report(target: str, file: str):
         return JSONResponse({"error": "not_found"}, status_code=404)
 
 
-@app.get("/api/graph")
-def get_graph(target: str):
-    """Nodes/links for the findings graph: the target at the center, each finding a
-    node, affected hosts their own nodes, and harvested artifacts (tokens/creds from
-    target.state['artifacts']) linking findings that share a source — the real
-    cross-reference data, not invented."""
+_KIND_ACRONYMS = {"idor", "xss", "ssrf", "sqli", "sql", "xxe", "csrf", "jwt", "api", "rce", "ssti", "lfi", "rfi"}
+
+
+def _kind_label(kind: str) -> str:
+    """'exposed_debug_endpoint' -> 'Exposed Debug Endpoint' — findings don't
+    carry a separate human-readable vulnerability-class name, only this
+    snake_case `kind`, so derive one instead of showing raw dots."""
+    kind = (kind or "").strip()
+    if not kind:
+        return "Uncategorized"
+    return " ".join(w.upper() if w in _KIND_ACRONYMS else w.capitalize() for w in kind.split("_"))
+
+
+def _graph_for_targets(center_label: str, target_names: list) -> dict:
+    """The knowledge-graph data for one or several targets: a hub per
+    finding `kind` (the ring), every finding a dot under its hub, and the
+    hosts/artifacts/targets it actually touches as satellites — all real
+    cross-references pulled straight from recorded data, nothing invented.
+    Geometry (angles, radii, bezier curvature) is entirely a frontend
+    concern; this just ships the graph itself."""
     from hellhound.core.tasks import create_or_load_target
-    try:
-        tgt = create_or_load_target(target)
-    except Exception:
-        return {"nodes": [], "links": []}
-    nodes = [{"id": target, "type": "target", "label": target}]
-    links = []
-    seen = {target}
-    for i, f in enumerate(getattr(tgt, "findings", []) or []):
-        if not isinstance(f, dict):
+
+    targets, hubs, findings, hosts, artifacts = [], {}, [], {}, []
+    for tname in target_names:
+        try:
+            tgt = create_or_load_target(tname)
+        except Exception:
             continue
-        fid = f"finding:{i}"
-        nodes.append({"id": fid, "type": "finding", "label": f.get("type", "")[:48],
-                      "severity": f.get("severity", "medium")})
-        links.append({"source": target, "target": fid})
-        for h in (f.get("affected_hosts") or []):
-            hid = f"host:{h}"
-            if hid not in seen:
-                seen.add(hid)
-                nodes.append({"id": hid, "type": "host", "label": h})
-            links.append({"source": fid, "target": hid})
-    # Harvested artifacts (tokens/creds) that bind findings to a source.
-    arts = (getattr(tgt, "state", {}) or {}).get("artifacts") or []
-    for j, a in enumerate(arts if isinstance(arts, list) else []):
-        if not isinstance(a, dict):
-            continue
-        aid = f"artifact:{j}"
-        nodes.append({"id": aid, "type": "artifact",
-                      "label": (a.get("kind") or a.get("type") or "artifact")[:32]})
-        src = a.get("source") or a.get("source_url")
-        if src:
-            links.append({"source": aid, "target": target})
-    return {"nodes": nodes, "links": links}
+        tid = f"target:{tname}"
+        targets.append({"id": tid, "label": tname})
+        for i, f in enumerate(getattr(tgt, "findings", []) or []):
+            if not isinstance(f, dict):
+                continue
+            kind = str(f.get("kind") or "uncategorized")
+            hub_id = f"kind:{kind}"
+            hub = hubs.setdefault(hub_id, {"id": hub_id, "label": _kind_label(kind), "count": 0})
+            hub["count"] += 1
+            host_ids = []
+            for h in (f.get("affected_hosts") or []):
+                hid = f"host:{h}"
+                hosts.setdefault(hid, {"id": hid, "label": h})
+                host_ids.append(hid)
+            findings.append({
+                "id": f"finding:{tname}:{i}",
+                "hub": hub_id,
+                "target": tid,
+                "severity": str(f.get("severity", "medium")),
+                "label": str(f.get("type", ""))[:80],
+                "endpoint": str(f.get("target", "")),
+                "note": str(f.get("note", ""))[:400],
+                "hosts": host_ids,
+                "report": os.path.basename(f["report_path"]) if f.get("report_path") else None,
+                "report_target": tname,
+            })
+        # A long recon pass can harvest hundreds of artifacts (tokens, URLs,
+        # parameters) per target — real data, but drawing each one as its own
+        # node would bury the one or two actual findings under a sunflower
+        # of noise. Same principle HexBrain itself uses for an oversized
+        # strip: past a point, show the count, not every dot (see ARTIFACT_CAP).
+        ARTIFACT_CAP = 20
+        arts = (getattr(tgt, "state", {}) or {}).get("artifacts") or []
+        arts = [a for a in arts if isinstance(a, dict)]
+        for j, a in enumerate(arts[:ARTIFACT_CAP]):
+            artifacts.append({
+                "id": f"artifact:{tname}:{j}",
+                "target": tid,
+                "label": (a.get("kind") or a.get("type") or "artifact")[:32],
+            })
+        if len(arts) > ARTIFACT_CAP:
+            artifacts.append({
+                "id": f"artifact:{tname}:more",
+                "target": tid,
+                "label": f"+{len(arts) - ARTIFACT_CAP} more",
+            })
+
+    return {
+        "center": center_label,
+        "targets": targets,
+        "hubs": sorted(hubs.values(), key=lambda h: -h["count"]),
+        "findings": findings,
+        "hosts": list(hosts.values())[:80],
+        "artifacts": artifacts,
+    }
+
+
+@app.get("/api/graph")
+def get_graph(target: str = "", program: str = ""):
+    if program:
+        return _graph_for_targets(program, _program_target_names(program))
+    return _graph_for_targets(target, [target] if target else [])
 
 
 # ── chat history persistence per target ────────────────────────────────────

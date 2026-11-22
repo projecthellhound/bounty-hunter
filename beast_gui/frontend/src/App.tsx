@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { marked } from "marked";
 import logo from "./logo.png";
+import KnowledgeGraph from "./graph/KnowledgeGraph";
 import "./App.css";
 
 const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
@@ -46,7 +47,16 @@ interface Finding {
   note: string;
   affected_hosts: string[];
   report: string | null;
+  target?: string;
 }
+
+interface ProgramMeta {
+  name: string;
+  display_name: string;
+  targets: string[];
+}
+
+type Scope = { kind: "target"; name: string } | { kind: "program"; name: string };
 
 interface CommandMeta {
   name: string;
@@ -136,6 +146,10 @@ export default function App() {
   const [targets, setTargets] = useState<string[]>([]);
   const [activeTarget, setActiveTarget] = useState<string>("default");
   const [findings, setFindings] = useState<Finding[]>([]);
+  const [programs, setPrograms] = useState<ProgramMeta[]>([]);
+  const [collapsedPrograms, setCollapsedPrograms] = useState<Set<string>>(new Set());
+  const [scope, setScope] = useState<Scope>({ kind: "target", name: "default" });
+  const [navView, setNavView] = useState<"chat" | "graph">("chat");
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -143,7 +157,7 @@ export default function App() {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [report, setReport] = useState<{ title: string; file: string } | null>(null);
+  const [report, setReport] = useState<{ title: string; file: string; target: string } | null>(null);
   const [userScrolled, setUserScrolled] = useState(false);
   const [commands, setCommands] = useState<CommandMeta[]>([]);
   const [cmdHighlight, setCmdHighlight] = useState(0);
@@ -151,6 +165,15 @@ export default function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const scopeRef = useRef<Scope>(scope);
+  useEffect(() => { scopeRef.current = scope; }, [scope]);
+
+  useEffect(() => {
+    if (scope.kind === "program") {
+      fetch(`${API}/api/findings?program=${encodeURIComponent(scope.name)}`)
+        .then((r) => r.json()).then((d) => setFindings(d.findings || [])).catch(() => {});
+    }
+  }, [scope]);
 
   const pushEntry = useCallback((e: Entry) => setEntries((prev) => [...prev, e]), []);
 
@@ -167,7 +190,10 @@ export default function App() {
           case "targets": setTargets(msg.list || []); break;
           case "findings":
             if (msg.target) setActiveTarget(msg.target);
-            setFindings(msg.list || []);
+            // A program-wide view aggregates findings across every target in
+            // it (fetched separately, below) — a per-target push here would
+            // clobber that aggregate with just the one target's findings.
+            if (scopeRef.current.kind === "target") setFindings(msg.list || []);
             break;
           case "chat_history":
             if (msg.target) setActiveTarget(msg.target);
@@ -221,6 +247,13 @@ export default function App() {
     fetch(`${API}/api/commands`).then((r) => r.json()).then((d) => setCommands(d.commands || [])).catch(() => {});
   }, []);
 
+  // Program membership (which targets live under which program) only
+  // changes via /program commands, which also push a fresh "targets" list —
+  // piggyback on that same signal instead of polling.
+  useEffect(() => {
+    fetch(`${API}/api/programs`).then((r) => r.json()).then((d) => setPrograms(d.programs || [])).catch(() => {});
+  }, [targets]);
+
   // Slash-command picker: live while the user is still typing the command
   // token itself ("/" with no space yet) — same idea as the TARGETS list,
   // but for the ~45 commands commands.py registers, so nobody has to
@@ -273,7 +306,30 @@ export default function App() {
 
   const switchTarget = useCallback((name: string) => {
     wsRef.current?.send(JSON.stringify({ type: "switch_target", target: name }));
+    setScope({ kind: "target", name });
     setUserScrolled(false);
+  }, []);
+
+  // Clicking a program (rather than one of its targets) broadens the
+  // Findings/Knowledge-Graph view to the whole engagement, while chat still
+  // necessarily talks to one concrete target's Agent — there's no merged
+  // multi-target chat session — so it auto-picks one to land on: whichever
+  // of the program's targets is already active, else its first.
+  const selectProgram = useCallback((program: ProgramMeta) => {
+    setScope({ kind: "program", name: program.name });
+    const land = program.targets.includes(activeTarget) ? activeTarget : program.targets[0];
+    if (land && land !== activeTarget) {
+      wsRef.current?.send(JSON.stringify({ type: "switch_target", target: land }));
+    }
+    setUserScrolled(false);
+  }, [activeTarget]);
+
+  const toggleProgram = useCallback((name: string) => {
+    setCollapsedPrograms((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
   }, []);
 
   const clearChat = useCallback(() => {
@@ -326,13 +382,41 @@ export default function App() {
         ) : (
           <>
             <nav className="nav">
-              <div className="nav-item active">Findings</div>
+              <div className={`nav-item ${navView === "chat" ? "active" : ""}`} onClick={() => setNavView("chat")}>Findings</div>
               <div className="nav-item">Automations</div>
               <div className="nav-item">Skills</div>
+              <div className={`nav-item ${navView === "graph" ? "active" : ""}`} onClick={() => setNavView("graph")}>Knowledge Graph</div>
             </nav>
             <div className="rail-section-title">TARGETS</div>
             <div className="target-list">
-              {targets.map((t) => (
+              {programs.map((p) => {
+                const myTargets = p.targets.filter((t) => targets.includes(t));
+                if (myTargets.length === 0) return null;
+                const collapsed = collapsedPrograms.has(p.name);
+                return (
+                  <div key={p.name} className="program-group">
+                    <div className={`program-row ${scope.kind === "program" && scope.name === p.name ? "active" : ""}`}>
+                      <button className="program-arrow" onClick={() => toggleProgram(p.name)}>
+                        {collapsed ? "▸" : "▾"}
+                      </button>
+                      <button className="program-name" onClick={() => selectProgram(p)} title={`View the whole ${p.display_name} program`}>
+                        {p.display_name}
+                      </button>
+                    </div>
+                    {!collapsed && myTargets.map((t) => (
+                      <button
+                        key={t}
+                        className={`target nested ${t === activeTarget ? "active" : ""}`}
+                        onClick={() => switchTarget(t)}
+                      >
+                        <span className="target-dot" />
+                        <span className="target-name">{t}</span>
+                      </button>
+                    ))}
+                  </div>
+                );
+              })}
+              {targets.filter((t) => !programs.some((p) => p.targets.includes(t))).map((t) => (
                 <button
                   key={t}
                   className={`target ${t === activeTarget ? "active" : ""}`}
@@ -365,6 +449,11 @@ export default function App() {
           )}
           <div className="tb-target">
             <span className={`target-badge ${hasTarget ? "" : "unset"}`}>{hasTarget ? activeTarget : "No target yet"}</span>
+            {scope.kind === "program" && (
+              <span className="program-badge" title="Findings and Knowledge Graph are showing the whole program; chat still talks to the target above">
+                whole program: {programs.find((p) => p.name === scope.name)?.display_name || scope.name}
+              </span>
+            )}
           </div>
           <div className="tb-meta">
             {findings.length > 0 && (
@@ -386,6 +475,14 @@ export default function App() {
           </div>
         </header>
 
+        {navView === "graph" ? (
+          <KnowledgeGraph
+            scope={scope}
+            apiBase={API}
+            onViewReport={(title, file, target) => setReport({ title, file, target })}
+          />
+        ) : (
+        <>
         <div className="log" ref={logRef} onScroll={handleLogScroll}>
           {entries.length === 0 && (
             <div className="chat-empty-state">
@@ -484,6 +581,8 @@ export default function App() {
             </button>
           </div>
         </div>
+        </>
+        )}
       </main>
 
       {/* ── RIGHT RAIL ─── */}
@@ -520,11 +619,12 @@ export default function App() {
                     <span className={`sev sev-${f.severity}`}>{f.severity}</span>
                     <span className="finding-title">{f.title || f.kind || "finding"}</span>
                   </div>
+                  {scope.kind === "program" && f.target && <div className="finding-ep">{f.target}</div>}
                   {f.endpoint && <div className="finding-ep">{f.endpoint}</div>}
                   {f.report && (
                     <button
                       className="view-report"
-                      onClick={() => setReport({ title: f.title || "report", file: f.report! })}
+                      onClick={() => setReport({ title: f.title || "report", file: f.report!, target: f.target || activeTarget })}
                     >
                       view report
                     </button>
@@ -541,7 +641,7 @@ export default function App() {
       {report && (
         <ReportModal
           title={report.title}
-          src={`${API}/api/report?target=${encodeURIComponent(activeTarget)}&file=${encodeURIComponent(report.file)}`}
+          src={`${API}/api/report?target=${encodeURIComponent(report.target)}&file=${encodeURIComponent(report.file)}`}
           onClose={() => setReport(null)}
         />
       )}
