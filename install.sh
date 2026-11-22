@@ -166,7 +166,26 @@ stop_animation
 success "HELLHOUND core engine installed"
 info "Interactive Textual TUI ready — run 'beast' for it, or 'beast --classic' for the classic console."
 
-# ── 4. Playwright (Spider-style handling) ──────────────
+# ── GUI extras (beast --gui native desktop window) ─────
+info "Installing GUI backend dependencies (FastAPI + pywebview)..."
+if _pip_install_with_retry -e "$PROJECT_ROOT[gui]"; then
+    success "GUI backend ready"
+    # Build the React frontend if Node/npm are available
+    FRONTEND_DIR="$PROJECT_ROOT/beast_gui/frontend"
+    if [ -f "$FRONTEND_DIR/package.json" ] && command -v npm &>/dev/null; then
+        info "Building GUI frontend…"
+        if (cd "$FRONTEND_DIR" && npm install --silent 2>/dev/null && npm run build --silent 2>/dev/null); then
+            success "GUI frontend built — 'beast --gui' launches the native desktop window"
+        else
+            warn "Frontend build failed — 'beast --gui' will fall back to the browser tab until you run: cd beast_gui/frontend && npm install && npm run build"
+        fi
+    else
+        warn "npm not found — skipping frontend build. To use 'beast --gui' run: cd beast_gui/frontend && npm install && npm run build"
+    fi
+else
+    warn "GUI deps could not be installed — 'beast' (TUI) and 'beast --classic' still work."
+fi
+
 stop_animation
 info "Mounting SPA Engine..."
 
