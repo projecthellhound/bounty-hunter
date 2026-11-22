@@ -1,9 +1,8 @@
 # BEAST GUI
 
-A desktop-app front-end for BEAST, in the spirit of Claude Code / Caido / Burp:
-a native window (not a browser tab) with a working-log transcript in the middle,
-collapsible tool cards, a targets rail on the left, and a findings rail on the
-right that can render BEAST's own HTML reports inline.
+A desktop-app front-end for BEAST: a native window (not a browser tab) with a
+working-log transcript in the middle, collapsible tool cards, a targets rail on the
+left, and a findings rail on the right that can render BEAST's own HTML reports inline.
 
 Under the hood it's a local FastAPI + React app rendered inside a native OS
 window (WebKit2GTK via **pywebview**). `beast --gui` opens the window;

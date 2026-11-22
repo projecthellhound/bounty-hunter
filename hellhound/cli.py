@@ -61,7 +61,7 @@ def _configure_logging():
 @click.option("--print", "-p", "print_cmd", default=None, help="Execute a slash command in headless mode and print output")
 @click.option("--json", "-j", "json_output", is_flag=True, default=False, help="Force structured JSON output for automation")
 @click.option("--classic", is_flag=True, default=False, help="Launch the classic prompt_toolkit console instead of the Textual TUI")
-@click.option("--gui", is_flag=True, default=False, help="Launch the GUI (Claude-Code-style) as a native desktop-app window")
+@click.option("--gui", is_flag=True, default=False, help="Launch the GUI as a native desktop application window")
 @click.option("--web", is_flag=True, default=False, help="With --gui, open in a browser tab instead of a native window (for headless/SSH)")
 @click.option("--no-browser", is_flag=True, default=False, help="With --gui --web, start the backend but don't auto-open a browser tab")
 @click.version_option("12.7.0", prog_name="HELLHOUND")
@@ -73,7 +73,7 @@ def cli(ctx, print_cmd, json_output, classic, gui, web, no_browser):
     Run without arguments to launch the interactive chat console.
 
       beast                     → interactive Textual TUI
-      beast --gui               → native desktop-app window (Claude-Code-style)
+      beast --gui               → native desktop application window
       beast --gui --web         → same GUI in a browser tab (headless/SSH)
       beast --classic           → classic prompt_toolkit console
       beast --print "/scope show --json"

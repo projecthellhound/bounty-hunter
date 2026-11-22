@@ -10,11 +10,22 @@ const PROVIDERS = ["ollama", "nvidia", "openai", "anthropic", "gemini"] as const
 
 type LogKind = "info" | "warn" | "success" | "error" | "finding" | "banner" | "section";
 
-interface LogLine {
+interface UserMsg {
+  kind: "user";
+  text: string;
+}
+
+interface AssistantMsg {
+  kind: "assistant";
+  text: string;
+}
+
+interface StatusLine {
   kind: "log";
   logKind: LogKind;
   text: string;
 }
+
 interface ToolCard {
   kind: "tool";
   cardId: string | null;
@@ -23,7 +34,8 @@ interface ToolCard {
   result?: unknown;
   done: boolean;
 }
-type Entry = LogLine | ToolCard;
+
+type Entry = UserMsg | AssistantMsg | StatusLine | ToolCard;
 
 interface Finding {
   id: number;
@@ -77,13 +89,37 @@ function renderMd(text: string): { __html: string } {
   catch { return { __html: text }; }
 }
 
-/** True if the beast emitted a multi-sentence prose response (not a terse status line) */
-function isAssistantProse(text: string): boolean {
-  if (/^\[[\+\*!\-#]\]/.test(text)) return false;          // [+] status prefixes
-  if (/^(Found|Running|Scanning|Starting|No |Done|Error)/.test(text)) return false;
-  if (!text.includes("\n") && text.length < 60) return false; // short single-liners
-  if (/\*\*|##|`[^`]|\|---|^- /m.test(text)) return true;   // has markdown markers
-  return text.includes("\n") && text.length > 120;            // multi-line long text
+/** Normalize raw saved entries from JSON into strongly-typed Entry objects */
+function normalizeEntry(item: any): Entry {
+  if (!item || typeof item !== "object") {
+    return { kind: "log", logKind: "info", text: String(item) };
+  }
+  if (item.kind === "user" || item.kind === "assistant") {
+    return item as Entry;
+  }
+  if (item.kind === "tool") {
+    return {
+      kind: "tool",
+      cardId: item.cardId ?? null,
+      tool: item.tool || "",
+      args: item.args || {},
+      result: item.result,
+      done: Boolean(item.done),
+    };
+  }
+  if (item.kind === "log") {
+    // If it's a user banner line, convert to a clean user message
+    if (item.logKind === "banner") {
+      const clean = item.text.startsWith("❯ ") ? item.text.slice(2) : item.text;
+      return { kind: "user", text: clean };
+    }
+    // If it's a turn end success message, convert to assistant message
+    if (item.logKind === "success" && (item.text.length > 80 || item.text.includes("\n") || /\*\*|`/.test(item.text))) {
+      return { kind: "assistant", text: item.text };
+    }
+    return { kind: "log", logKind: item.logKind || "info", text: item.text || "" };
+  }
+  return { kind: "log", logKind: "info", text: JSON.stringify(item) };
 }
 
 export default function App() {
@@ -121,7 +157,20 @@ export default function App() {
             if (msg.target) setActiveTarget(msg.target);
             setFindings(msg.list || []);
             break;
-          case "log": pushEntry({ kind: "log", logKind: msg.kind, text: msg.text }); break;
+          case "chat_history":
+            if (msg.target) setActiveTarget(msg.target);
+            if (Array.isArray(msg.entries)) {
+              setEntries(msg.entries.map(normalizeEntry));
+            }
+            break;
+          case "log":
+            if (msg.kind === "banner") {
+              const clean = msg.text.startsWith("❯ ") ? msg.text.slice(2) : msg.text;
+              pushEntry({ kind: "user", text: clean });
+            } else {
+              pushEntry({ kind: "log", logKind: msg.kind, text: msg.text });
+            }
+            break;
           case "status_label": setStatusLabel(msg.text || ""); break;
           case "tool_start":
             pushEntry({ kind: "tool", cardId: msg.card_id ?? null, tool: msg.tool, args: msg.args || {}, done: false });
@@ -142,7 +191,7 @@ export default function App() {
           case "turn_status": setStatusLabel(msg.text || ""); break;
           case "turn_end":
             setStatusLabel("");
-            if (msg.text) pushEntry({ kind: "log", logKind: "success", text: msg.text });
+            if (msg.text) pushEntry({ kind: "assistant", text: msg.text });
             if (!msg.auto_continue) setBusy(false);
             break;
           case "error":
@@ -156,7 +205,7 @@ export default function App() {
     return () => { closed = true; wsRef.current?.close(); };
   }, [pushEntry]);
 
-  // Detect user scrolling up so we don't auto-snap back on them
+  // Detect user scrolling up so we don't snap back on them
   const handleLogScroll = useCallback(() => {
     const el = logRef.current;
     if (!el) return;
@@ -174,18 +223,24 @@ export default function App() {
   const send = useCallback(() => {
     const text = input.trim();
     if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    pushEntry({ kind: "log", logKind: "banner", text: `❯ ${text}` });
+    pushEntry({ kind: "user", text });
     wsRef.current.send(JSON.stringify({ type: "message", text }));
     setInput("");
     setBusy(true);
-    setUserScrolled(false); // snap back to bottom when user sends a message
+    setUserScrolled(false);
   }, [input, pushEntry]);
 
   const switchTarget = useCallback((name: string) => {
     wsRef.current?.send(JSON.stringify({ type: "switch_target", target: name }));
-    setEntries([]);
     setUserScrolled(false);
   }, []);
+
+  const clearChat = useCallback(() => {
+    if (confirm(`Clear chat history for target '${activeTarget}'?`)) {
+      wsRef.current?.send(JSON.stringify({ type: "clear_history", target: activeTarget }));
+      setEntries([]);
+    }
+  }, [activeTarget]);
 
   const sortedFindings = [...findings].sort(
     (a, b) => (SEV_ORDER[a.severity] ?? 5) - (SEV_ORDER[b.severity] ?? 5) || a.id - b.id
@@ -197,16 +252,37 @@ export default function App() {
     <div className={`app ${leftCollapsed ? "l-col" : ""} ${rightCollapsed ? "r-col" : ""}`}>
 
       {/* ── LEFT RAIL ─── */}
-      <aside className="rail left">
+      <aside className={`rail left ${leftCollapsed ? "collapsed" : ""}`}>
         <div className="brand">
-          <img className="brand-logo" src={logo} alt="" />
+          <img className="brand-logo" src={logo} alt="Beast" />
           {!leftCollapsed && <span className="brand-name">BEAST</span>}
-          <button className="rail-toggle" title={leftCollapsed ? "Expand" : "Collapse"}
-            onClick={() => setLeftCollapsed((v) => !v)}>
+          <button
+            className="rail-toggle"
+            title={leftCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={() => setLeftCollapsed((v) => !v)}
+          >
             {leftCollapsed ? "»" : "«"}
           </button>
         </div>
-        {!leftCollapsed && (
+
+        {leftCollapsed ? (
+          <div className="rail-collapsed-actions">
+            <button
+              className="collapsed-icon-btn"
+              title="Expand sidebar"
+              onClick={() => setLeftCollapsed(false)}
+            >
+              ☰
+            </button>
+            <button
+              className="collapsed-icon-btn"
+              title="Settings"
+              onClick={() => setSettingsOpen(true)}
+            >
+              ⚙
+            </button>
+          </div>
+        ) : (
           <>
             <nav className="nav">
               <div className="nav-item active">Findings</div>
@@ -216,12 +292,20 @@ export default function App() {
             <div className="rail-section-title">TARGETS</div>
             <div className="target-list">
               {targets.map((t) => (
-                <button key={t} className={`target ${t === activeTarget ? "active" : ""}`}
-                  onClick={() => switchTarget(t)}>{t}</button>
+                <button
+                  key={t}
+                  className={`target ${t === activeTarget ? "active" : ""}`}
+                  onClick={() => switchTarget(t)}
+                >
+                  <span className="target-dot" />
+                  <span className="target-name">{t}</span>
+                </button>
               ))}
               {targets.length === 0 && <div className="empty">no targets yet</div>}
             </div>
-            <button className="settings-btn" onClick={() => setSettingsOpen(true)}>⚙ Settings</button>
+            <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
+              ⚙ Settings
+            </button>
           </>
         )}
       </aside>
@@ -229,45 +313,96 @@ export default function App() {
       {/* ── CENTER ─── */}
       <main className="center">
         <header className="topbar">
-          <div className="tb-target">{activeTarget}</div>
-          <div className={`tb-status ${connected ? "ok" : "err"}`}>
-            {connected ? "● connected" : "○ reconnecting"}
+          {leftCollapsed && (
+            <button
+              className="topbar-toggle-btn"
+              title="Expand sidebar"
+              onClick={() => setLeftCollapsed(false)}
+            >
+              ☰
+            </button>
+          )}
+          <div className="tb-target">
+            <span className="target-badge">{activeTarget}</span>
+          </div>
+          <div className="tb-meta">
+            {findings.length > 0 && (
+              <span className="tb-findings-count">{findings.length} findings</span>
+            )}
+            <button className="tb-clear-btn" title="Clear chat for this target" onClick={clearChat}>
+              clear chat
+            </button>
+            <div className={`tb-status ${connected ? "ok" : "err"}`}>
+              {connected ? "● connected" : "○ reconnecting"}
+            </div>
+            <button
+              className="topbar-toggle-btn right-toggle"
+              title={rightCollapsed ? "Show Actions & Findings" : "Hide panel"}
+              onClick={() => setRightCollapsed((v) => !v)}
+            >
+              {rightCollapsed ? "« panel" : "»"}
+            </button>
           </div>
         </header>
 
         <div className="log" ref={logRef} onScroll={handleLogScroll}>
           {entries.length === 0 && (
-            <div className="log-hint">
-              Ask the beast to hunt. e.g. <code>recon example.com and look for IDORs</code>
+            <div className="chat-empty-state">
+              <img className="empty-logo" src={logo} alt="Beast" />
+              <h2>BEAST Autonomous Hunting Console</h2>
+              <p>Target: <strong>{activeTarget}</strong>. Enter an instruction to begin testing.</p>
+              <div className="empty-suggestions">
+                <button onClick={() => setInput(`recon ${activeTarget} and discover endpoints`)}>
+                  <code>recon {activeTarget} and discover endpoints</code>
+                </button>
+                <button onClick={() => setInput(`check ${activeTarget} for IDOR and access control issues`)}>
+                  <code>check {activeTarget} for IDOR and access control issues</code>
+                </button>
+                <button onClick={() => setInput("what did we find so far?")}>
+                  <code>what did we find so far?</code>
+                </button>
+              </div>
             </div>
           )}
-          {entries.map((e, i) =>
-            e.kind === "log" ? <LogLineView key={i} entry={e} /> : <ToolCardView key={i} card={e} />
-          )}
+
+          {entries.map((e, i) => (
+            <EntryRow key={i} entry={e} />
+          ))}
+
           {statusLabel && (
-            <div className="line status"><span className="spinner" /> {statusLabel}</div>
+            <div className="turn-status-bar">
+              <span className="spinner" />
+              <span>{statusLabel}</span>
+            </div>
           )}
         </div>
 
         <div className="composer">
           <textarea
             value={input}
-            placeholder={busy ? "working… (you can still type)" : "Message BEAST…"}
+            placeholder={busy ? "Hunting in progress… (you can queue more instructions)" : `Message BEAST about ${activeTarget}…`}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
             rows={1}
           />
-          <button className="send" onClick={send} disabled={!connected}>
+          <button className="send" onClick={send} disabled={!connected || !input.trim()}>
             {busy ? "…" : "Send"}
           </button>
         </div>
       </main>
 
       {/* ── RIGHT RAIL ─── */}
-      <aside className="rail right">
-        <button className="rail-toggle solo"
+      <aside className={`rail right ${rightCollapsed ? "collapsed" : ""}`}>
+        <button
+          className="rail-toggle solo"
           title={rightCollapsed ? "Show findings & actions" : "Hide panel"}
-          onClick={() => setRightCollapsed((v) => !v)}>
+          onClick={() => setRightCollapsed((v) => !v)}
+        >
           {rightCollapsed ? "«" : "»"}
         </button>
         {!rightCollapsed && (
@@ -297,8 +432,10 @@ export default function App() {
                   </div>
                   {f.endpoint && <div className="finding-ep">{f.endpoint}</div>}
                   {f.report && (
-                    <button className="view-report"
-                      onClick={() => setReport({ title: f.title || "report", file: f.report! })}>
+                    <button
+                      className="view-report"
+                      onClick={() => setReport({ title: f.title || "report", file: f.report! })}
+                    >
                       view report
                     </button>
                   )}
@@ -322,32 +459,46 @@ export default function App() {
   );
 }
 
-function LogLineView({ entry }: { entry: LogLine }) {
-  const { logKind, text } = entry;
-
-  // User message → right-aligned bubble (Claude Code style human turn)
-  if (logKind === "banner") {
-    const clean = text.startsWith("❯ ") ? text.slice(2) : text;
+/** Component to render any Entry row (User prompt, Assistant reply, Tool Card, or Status) */
+function EntryRow({ entry }: { entry: Entry }) {
+  if (entry.kind === "user") {
     return (
-      <div className="msg user">
-        <div className="msg-bubble">{clean}</div>
+      <div className="chat-row user-row">
+        <div className="user-bubble">
+          {entry.text}
+        </div>
       </div>
     );
   }
 
-  if (logKind === "finding") return <div className="line finding">{text}</div>;
-  if (logKind === "section") return <div className="line section">{text}</div>;
-
-  // Assistant prose → left-aligned bubble with markdown rendering
-  if ((logKind === "success" || logKind === "info") && isAssistantProse(text)) {
+  if (entry.kind === "assistant") {
     return (
-      <div className="msg assistant">
-        <div className="msg-bubble md" dangerouslySetInnerHTML={renderMd(text)} />
+      <div className="chat-row assistant-row">
+        <div className="assistant-avatar">
+          <img src={logo} alt="Beast" />
+        </div>
+        <div className="assistant-content">
+          <div className="assistant-header">
+            <span className="assistant-name">BEAST</span>
+          </div>
+          <div className="assistant-body md" dangerouslySetInnerHTML={renderMd(entry.text)} />
+        </div>
       </div>
     );
   }
 
-  return <div className={`line ${logKind}`}>{text}</div>;
+  if (entry.kind === "tool") {
+    return <ToolCardView card={entry} />;
+  }
+
+  // Generic log line (finding, error, section)
+  if (entry.logKind === "finding") {
+    return <div className="line finding">{entry.text}</div>;
+  }
+  if (entry.logKind === "section") {
+    return <div className="line section">{entry.text}</div>;
+  }
+  return <div className={`line ${entry.logKind}`}>{entry.text}</div>;
 }
 
 function ToolCardView({ card }: { card: ToolCard }) {
@@ -361,7 +512,7 @@ function ToolCardView({ card }: { card: ToolCard }) {
         <span className="tool-args">{prettyArgs(card.args)}</span>
         <span className="tool-caret">{open ? "▾" : "▸"}</span>
       </button>
-      {open && card.done && <pre className="tool-result">{preview.slice(0, 20000)}</pre>}
+      {open && card.done && <pre className="tool-result">{preview.slice(0, 25000)}</pre>}
     </div>
   );
 }
@@ -424,10 +575,18 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           {!cfg && <div className="empty">loading…</div>}
           {cfg && tab === "models" && (
             <>
-              <Field label="Orchestrator provider"><ProviderSelect value={cfg.orchestrator_provider} configured={cfg.configured_providers} onChange={(v) => patch({ orchestrator_provider: v })} /></Field>
-              <Field label="Orchestrator model"><input value={cfg.orchestrator_model} onChange={(e) => patch({ orchestrator_model: e.target.value })} /></Field>
-              <Field label="Synthesizer provider"><ProviderSelect value={cfg.synthesizer_provider} configured={cfg.configured_providers} onChange={(v) => patch({ synthesizer_provider: v })} /></Field>
-              <Field label="Synthesizer model"><input value={cfg.synthesizer_model} onChange={(e) => patch({ synthesizer_model: e.target.value })} /></Field>
+              <Field label="Orchestrator provider">
+                <ProviderSelect value={cfg.orchestrator_provider} configured={cfg.configured_providers} onChange={(v) => patch({ orchestrator_provider: v })} />
+              </Field>
+              <Field label="Orchestrator model">
+                <input value={cfg.orchestrator_model} onChange={(e) => patch({ orchestrator_model: e.target.value })} />
+              </Field>
+              <Field label="Synthesizer provider">
+                <ProviderSelect value={cfg.synthesizer_provider} configured={cfg.configured_providers} onChange={(v) => patch({ synthesizer_provider: v })} />
+              </Field>
+              <Field label="Synthesizer model">
+                <input value={cfg.synthesizer_model} onChange={(e) => patch({ synthesizer_model: e.target.value })} />
+              </Field>
             </>
           )}
           {cfg && tab === "keys" && (

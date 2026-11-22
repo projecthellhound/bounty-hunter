@@ -211,16 +211,75 @@ def get_graph(target: str):
     return {"nodes": nodes, "links": links}
 
 
+# ── chat history persistence per target ────────────────────────────────────
+def _chat_history_path(target_name: str) -> Path:
+    from hellhound.core.tasks import get_target_path, sanitize_target_name
+    base = Path(get_target_path(sanitize_target_name(target_name))).parent
+    return base / "gui_chat.json"
+
+
+def _load_chat_history(target_name: str) -> list:
+    path = _chat_history_path(target_name)
+    if path.is_file():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            return []
+    return []
+
+
+def _save_chat_history(target_name: str, entries: list) -> None:
+    path = _chat_history_path(target_name)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Bounded to last 400 entries per target to keep fast while preserving days of history
+        to_save = entries[-400:] if len(entries) > 400 else entries
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(to_save, f, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        print(f"[!] Warning: failed to save chat history for {target_name}: {exc}")
+
+
 # ── event pump + websocket ────────────────────────────────────────────────
-async def _pump_events(ws: WebSocket, gui_emit: GuiEmit, stop: asyncio.Event):
+async def _pump_events(ws: WebSocket, gui_emit: GuiEmit, stop: asyncio.Event, current_entries: list, target_getter: callable):
     """Drains gui_emit's thread-safe queue and forwards each event to the client,
     concurrently with handle_message running on a worker thread — so tool_start/
-    tool_result land live, not all at once after the turn."""
+    tool_result land live, not all at once after the turn. Also keeps track of
+    the live entries for history persistence."""
     loop = asyncio.get_running_loop()
     while not stop.is_set():
         event = await loop.run_in_executor(None, gui_emit.events.get)
         if event.get("type") == "_stop":
             break
+        # Track tool events in current entries
+        etype = event.get("type")
+        if etype == "tool_start":
+            current_entries.append({
+                "kind": "tool",
+                "cardId": event.get("card_id"),
+                "tool": event.get("tool", ""),
+                "args": event.get("args") or {},
+                "done": False,
+            })
+        elif etype == "tool_result":
+            cid = event.get("card_id")
+            for item in reversed(current_entries):
+                if item.get("kind") == "tool" and not item.get("done") and item.get("cardId") == cid:
+                    item["result"] = event.get("result")
+                    item["done"] = True
+                    break
+        elif etype == "log":
+            lkind = event.get("kind")
+            if lkind in ("finding", "error"):
+                current_entries.append({
+                    "kind": "log",
+                    "logKind": lkind,
+                    "text": event.get("text", ""),
+                })
+
         try:
             await ws.send_json(event)
         except Exception:
@@ -236,10 +295,19 @@ async def ws_endpoint(ws: WebSocket):
     agent = get_agent(current_target)
     gui_emit = GuiEmit()
     stop = asyncio.Event()
-    pump_task = asyncio.create_task(_pump_events(ws, gui_emit, stop))
+
+    active_target_name = agent.target.name
+    active_entries = _load_chat_history(active_target_name)
+
+    def get_active_target():
+        return active_target_name
+
+    pump_task = asyncio.create_task(_pump_events(ws, gui_emit, stop, active_entries, get_active_target))
 
     await ws.send_json({"type": "targets", "list": _list_targets()})
     await ws.send_json({"type": "findings", "target": agent.target.name, "list": _findings_for(agent.target.name)})
+    # Send preserved conversation history across past sessions
+    await ws.send_json({"type": "chat_history", "target": agent.target.name, "entries": active_entries})
 
     loop = asyncio.get_running_loop()
 
@@ -247,6 +315,11 @@ async def ws_endpoint(ws: WebSocket):
         await ws.send_json({"type": "findings", "target": agent.target.name, "list": _findings_for(agent.target.name)})
 
     async def run_turn(text: str):
+        nonlocal active_entries
+        # Record user turn into persistent history
+        active_entries.append({"kind": "log", "logKind": "banner", "text": f"❯ {text}"})
+        _save_chat_history(active_target_name, active_entries)
+
         session_context = {"target": agent.target.name,
                            "scope_rules": getattr(agent.target, "scope_rules", None)}
         try:
@@ -254,11 +327,20 @@ async def ws_endpoint(ws: WebSocket):
                 None, lambda: agent.handle_message(text, session_context=session_context, emit=gui_emit)
             )
         except Exception as exc:
-            await ws.send_json({"type": "error", "text": f"{type(exc).__name__}: {exc}"})
+            err_msg = f"{type(exc).__name__}: {exc}"
+            active_entries.append({"kind": "log", "logKind": "error", "text": err_msg})
+            _save_chat_history(active_target_name, active_entries)
+            await ws.send_json({"type": "error", "text": err_msg})
             return
+
+        if final_response:
+            active_entries.append({"kind": "log", "logKind": "success", "text": final_response})
+        _save_chat_history(active_target_name, active_entries)
+
         await ws.send_json({"type": "turn_end", "text": final_response,
                             "auto_continue": bool(getattr(agent, "_last_turn_auto_continue", False))})
         await _send_findings()
+
         # Same auto-continue loop as tui.py / chat_ui.py.
         while getattr(agent, "_last_turn_auto_continue", False):
             await ws.send_json({"type": "turn_status", "text": "Still mid-investigation — continuing on its own…"})
@@ -267,8 +349,16 @@ async def ws_endpoint(ws: WebSocket):
                     None, lambda: agent.handle_message("continue", session_context=session_context, emit=gui_emit)
                 )
             except Exception as exc:
-                await ws.send_json({"type": "error", "text": f"{type(exc).__name__}: {exc}"})
+                err_msg = f"{type(exc).__name__}: {exc}"
+                active_entries.append({"kind": "log", "logKind": "error", "text": err_msg})
+                _save_chat_history(active_target_name, active_entries)
+                await ws.send_json({"type": "error", "text": err_msg})
                 return
+
+            if final_response:
+                active_entries.append({"kind": "log", "logKind": "success", "text": final_response})
+            _save_chat_history(active_target_name, active_entries)
+
             await ws.send_json({"type": "turn_end", "text": final_response,
                                 "auto_continue": bool(getattr(agent, "_last_turn_auto_continue", False))})
             await _send_findings()
@@ -282,15 +372,29 @@ async def ws_endpoint(ws: WebSocket):
             elif mtype == "switch_target":
                 name = str(msg.get("target", "")).strip()
                 if name:
+                    # Save current target before switching
+                    _save_chat_history(active_target_name, active_entries)
                     agent = get_agent(name)
-                    current_target = name
+                    active_target_name = name
+                    # Load chat history for newly active target
+                    active_entries.clear()
+                    active_entries.extend(_load_chat_history(name))
                     await ws.send_json({"type": "targets", "list": _list_targets()})
                     await _send_findings()
+                    await ws.send_json({"type": "chat_history", "target": name, "entries": active_entries})
             elif mtype == "list_targets":
                 await ws.send_json({"type": "targets", "list": _list_targets()})
+            elif mtype == "clear_history":
+                target_to_clear = str(msg.get("target", active_target_name)).strip()
+                p = _chat_history_path(target_to_clear)
+                if p.is_file():
+                    p.unlink(missing_ok=True)
+                active_entries.clear()
+                await ws.send_json({"type": "chat_history", "target": target_to_clear, "entries": []})
     except WebSocketDisconnect:
         pass
     finally:
+        _save_chat_history(active_target_name, active_entries)
         stop.set()
         gui_emit.events.put({"type": "_stop"})
         pump_task.cancel()
@@ -334,9 +438,8 @@ def main():
 
 
 def run_desktop(title: str = "BEAST") -> bool:
-    """Native desktop-app window over the local server — the same FastAPI+React
-    app, but in an OS window (WebKit2GTK via pywebview) instead of a browser tab,
-    so it feels like Claude Code / Caido / Burp rather than a website.
+    """Native desktop application window over the local server — the same FastAPI+React
+    app, running in an OS window (WebKit2GTK via pywebview) instead of a browser tab.
 
     uvicorn runs on a daemon thread; pywebview owns the main thread (the GTK
     backend requires it). Returns False if no native webview backend is

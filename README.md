@@ -63,7 +63,7 @@
 
 **Three ways to drive it:**
 
-- **Desktop GUI** (`beast --gui`) — a native Claude-Code-style desktop window with a three-pane layout: targets on the left, live agent chat in the center, findings + running actions on the right. Full markdown rendering, collapsible panels.
+- **Desktop GUI** (`beast --gui`) — a native desktop application window with a three-pane layout: targets on the left, live agent chat in the center, findings + running actions on the right. Full markdown rendering, collapsible panels.
 - **Interactive terminal** (`beast`) — a full-screen TUI with live streaming, collapsible tool cards, a findings browser, and a command palette.
 - **Headless** (`beast -p "..."`) — one-line runs for scripts and CI pipelines.
 
