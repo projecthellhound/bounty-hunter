@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# tsc -b emits these next to vite.config.ts — build artifacts, not source
+vite.config.js
+vite.config.d.ts
+
+# The repo root .gitignore ignores *.json (line 215) and package-lock.json
+# (221) to keep local config/state out of git. The frontend's manifests are
+# real source, though — without them nobody can build the GUI. Re-include the
+# exact ones we need (a child .gitignore may re-include files a parent glob
+# excluded, since no parent *directory* is excluded here).
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.node.json

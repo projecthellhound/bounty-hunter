@@ -61,15 +61,18 @@ def _configure_logging():
 @click.option("--print", "-p", "print_cmd", default=None, help="Execute a slash command in headless mode and print output")
 @click.option("--json", "-j", "json_output", is_flag=True, default=False, help="Force structured JSON output for automation")
 @click.option("--classic", is_flag=True, default=False, help="Launch the classic prompt_toolkit console instead of the Textual TUI")
+@click.option("--gui", is_flag=True, default=False, help="Launch the browser GUI (Claude-Code-style) instead of the terminal TUI")
+@click.option("--no-browser", is_flag=True, default=False, help="With --gui, start the backend but don't auto-open a browser tab")
 @click.version_option("12.7.0", prog_name="HELLHOUND")
 @click.pass_context
-def cli(ctx, print_cmd, json_output, classic):
+def cli(ctx, print_cmd, json_output, classic, gui, no_browser):
     """
     BEAST (Bounty Hunter) — Project Hellhound's autonomous bug bounty recon & triage AI
 
     Run without arguments to launch the interactive chat console.
 
       beast                     → interactive Textual TUI
+      beast --gui               → browser GUI (Claude-Code-style)
       beast --classic           → classic prompt_toolkit console
       beast --print "/scope show --json"
       beast -p "/recon example.com"
@@ -79,7 +82,10 @@ def cli(ctx, print_cmd, json_output, classic):
         return
 
     if ctx.invoked_subcommand is None:
-        _launch_console(classic=classic)
+        if gui:
+            _launch_gui(open_browser=not no_browser)
+        else:
+            _launch_console(classic=classic)
 
 
 def _execute_headless(command_str: str, force_json: bool = False):
@@ -260,6 +266,76 @@ def _launch_console(classic: bool = False):
         sys.exit(0)
     except Exception as e:
         click.echo(f"[!] Failed to start console: {e}")
+        sys.exit(1)
+
+
+def _launch_gui(open_browser: bool = True):
+    """Launch the browser GUI: the FastAPI backend (beast_gui/backend/server.py)
+    serving the built React frontend, then open a browser tab pointed at it.
+
+    The backend is the SAME process that drives real hunts — it wraps
+    hellhound.core.agent.get_agent / handle_message exactly like the TUI, so
+    nothing about the agent is duplicated or mocked. `beast` (no flag) is still
+    the terminal TUI; this is purely an alternate front-end."""
+    _configure_logging()
+
+    import os
+    from pathlib import Path
+
+    # beast_gui lives at the repo root, a sibling of the `hellhound` package.
+    repo_root = Path(__file__).resolve().parents[1]
+    gui_dir = repo_root / "beast_gui"
+    dist_dir = gui_dir / "frontend" / "dist"
+
+    if not gui_dir.is_dir():
+        click.echo("[!] GUI not found (beast_gui/ missing). Reinstall with the GUI extra: "
+                   "pip install 'hellhound[gui]'")
+        sys.exit(1)
+
+    try:
+        import fastapi  # noqa: F401
+        import uvicorn  # noqa: F401
+    except Exception:
+        click.echo("[!] GUI dependencies missing. Install them with: pip install 'hellhound[gui]'")
+        sys.exit(1)
+
+    if not dist_dir.is_dir():
+        click.echo("[!] GUI frontend isn't built yet. Build it once with:")
+        click.echo("      cd beast_gui/frontend && npm install && npm run build")
+        click.echo("    (or run the dev server with `npm run dev`).")
+        sys.exit(1)
+
+    # Make `import beast_gui...` resolvable even when `beast` is on PATH from
+    # an installed console-script whose cwd is elsewhere.
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    port = int(os.environ.get("BEAST_GUI_PORT", "8787"))
+    url = f"http://127.0.0.1:{port}"
+    click.echo(f"[+] BEAST GUI → {url}  (Ctrl-C to stop)")
+
+    if open_browser:
+        import threading
+        import webbrowser
+
+        def _open():
+            import time
+            time.sleep(1.2)  # give uvicorn a moment to bind
+            try:
+                webbrowser.open(url)
+            except Exception:
+                pass
+
+        threading.Thread(target=_open, daemon=True).start()
+
+    try:
+        from beast_gui.backend.server import main as serve
+        serve()
+    except KeyboardInterrupt:
+        click.echo("\n[+] GUI stopped.")
+        sys.exit(0)
+    except Exception as e:
+        click.echo(f"[!] Failed to start GUI backend: {e}")
         sys.exit(1)
 
 

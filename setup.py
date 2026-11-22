@@ -20,6 +20,16 @@ setup(
         "prompt_toolkit",
         "textual>=0.80",
     ],
+    extras_require={
+        # `pip install hellhound[gui]` pulls the browser-GUI backend deps.
+        # The GUI (beast_gui/) is an alternate front-end over the SAME agent;
+        # without this extra, `beast` (TUI) and `beast --classic` still work.
+        "gui": [
+            "fastapi>=0.110",
+            "uvicorn>=0.27",
+            "websockets>=12",
+        ],
+    },
     entry_points={
         "console_scripts": [
             # `beast` is the primary command (the tool's nickname); `hellhound`

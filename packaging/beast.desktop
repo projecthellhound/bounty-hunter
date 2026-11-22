@@ -2,10 +2,15 @@
 Type=Application
 Name=Beast
 GenericName=Bug Bounty Reconnaissance & Triage Framework
-Comment=Autonomous AI bug bounty recon & triage assistant — opens the interactive terminal console
-Exec=beast-launch.sh
+Comment=Autonomous AI bug bounty recon & triage assistant — opens the browser GUI
+Exec=beast --gui
 Icon=beast
 Terminal=false
 Categories=Security;Network;System;Utility;
 Keywords=bugbounty;recon;pentest;security;hacking;osint;
 StartupNotify=true
+Actions=terminal;
+
+[Desktop Action terminal]
+Name=Open terminal console (TUI)
+Exec=beast-launch.sh
