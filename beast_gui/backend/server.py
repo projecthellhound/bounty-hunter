@@ -776,10 +776,16 @@ def _ensure_brain_running() -> bool:
     if not next_shim.exists():
         return False
 
+    # Prefer the production server (`next start`) — it binds in ~1s and is
+    # stable, where `next dev` cold-compiles on first open (20-40s, and the
+    # frontend panics before it finishes). Fall back to `next dev` only when
+    # no build exists (e.g. a dev editing the brain without building first).
+    built = (brain_dir / ".next" / "BUILD_ID").exists()
+    mode = "start" if built else "dev"
     try:
         log_file = open("/tmp/beast-brain.log", "a")
         _brain_proc = subprocess.Popen(
-            ["/bin/sh", str(next_shim), "dev", "--port", "3220"],
+            ["/bin/sh", str(next_shim), mode, "--port", "3220"],
             cwd=str(brain_dir),
             stdout=log_file,
             stderr=subprocess.STDOUT,

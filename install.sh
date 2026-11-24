@@ -200,17 +200,29 @@ if _pip_install_with_retry -e "$PROJECT_ROOT[gui]"; then
     # shows an "offline" banner (the rest of the GUI is unaffected).
     BRAIN_DIR="$PROJECT_ROOT/beast_gui/brain"
     if [ -f "$BRAIN_DIR/package.json" ]; then
-        if [ -x "$BRAIN_DIR/node_modules/.bin/next" ]; then
-            success "Brain ready (knowledge graph in 'beast --gui' → Brain tab)"
-        elif command -v npm &>/dev/null; then
-            info "Installing Brain dependencies (one-time, ~a minute)…"
-            if (cd "$BRAIN_DIR" && npm install --silent 2>/dev/null); then
-                success "Brain ready (knowledge graph in 'beast --gui' → Brain tab)"
-            else
-                warn "Brain deps didn't install — the GUI works, but its Brain tab stays offline until: cd beast_gui/brain && npm install"
+        if command -v npm &>/dev/null; then
+            # Install deps (once) then build, so the GUI serves the Brain with
+            # `next start` — it binds in ~1s, vs a slow `next dev` first-compile
+            # that makes the Brain tab look stuck on first open.
+            if [ ! -x "$BRAIN_DIR/node_modules/.bin/next" ]; then
+                info "Installing Brain dependencies (one-time, ~a minute)…"
+                (cd "$BRAIN_DIR" && npm install --silent 2>/dev/null) \
+                    || warn "Brain deps didn't install — Brain tab offline until: cd beast_gui/brain && npm install && npm run build"
+            fi
+            if [ -x "$BRAIN_DIR/node_modules/.bin/next" ]; then
+                if [ -f "$BRAIN_DIR/.next/BUILD_ID" ]; then
+                    success "Brain ready (knowledge graph in 'beast --gui' → Brain tab)"
+                else
+                    info "Building the Brain (one-time)…"
+                    if (cd "$BRAIN_DIR" && npm run build --silent >/dev/null 2>&1); then
+                        success "Brain ready (knowledge graph in 'beast --gui' → Brain tab)"
+                    else
+                        warn "Brain build didn't finish — it still runs in dev mode (slower first open)."
+                    fi
+                fi
             fi
         else
-            warn "Node/npm missing — the GUI works, but its Brain tab needs: cd beast_gui/brain && npm install"
+            warn "Node/npm missing — the GUI works, but its Brain tab needs: cd beast_gui/brain && npm install && npm run build"
         fi
     fi
 else
