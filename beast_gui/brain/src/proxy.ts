@@ -16,7 +16,9 @@ export function proxy(request: NextRequest) {
     `connect-src 'self'${dev ? " ws: wss:" : ""}`,
     "object-src 'none'", "base-uri 'self'", "form-action 'self'",
     "frame-ancestors 'self' http://localhost:* http://127.0.0.1:*",
-    ...(dev ? [] : ["upgrade-insecure-requests"]),
+    // NOTE: no `upgrade-insecure-requests`. The Brain always runs locally over
+    // plain http://localhost:3220; that directive would force every CSS/JS
+    // chunk to https (which isn't served) and the page renders blank/unstyled.
   ].join("; ");
   const headers = new Headers(request.headers);
   headers.set("x-nonce", nonce);
