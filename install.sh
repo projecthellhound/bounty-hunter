@@ -139,11 +139,19 @@ _pip_install_with_retry() {
     # for; a genuinely broken install (bad package name, syntax error in
     # setup.py) will fail identically on every attempt and still surface
     # pip's real error message on the final one.
-    local attempt
+    local attempt rc tmp
     for attempt in 1 2 3; do
-        if "$VENV_DIR/bin/pip" install --quiet "${PIP_NET_ARGS[@]}" "$@"; then
-            return 0
-        fi
+        tmp="$(mktemp)"
+        "$VENV_DIR/bin/pip" install --quiet "${PIP_NET_ARGS[@]}" "$@" >"$tmp" 2>&1
+        rc=$?
+        # setuptools prints a benign "BuildBackendWarning: Editable installation
+        # / Please be careful with folders…" block for every `pip install -e .`
+        # of a flat-layout package. It alarms new users for no reason (the
+        # install is fine), so drop just that block — real errors still show.
+        grep -vE 'BuildBackendWarning|Please be careful with folders|name as your package|take precedence during imports|with strategy, WheelFile|editable_wheel\.py:[0-9]+|^[[:space:]]*!![[:space:]]*$|^[[:space:]]*\*{10,}[[:space:]]*$' "$tmp" \
+            | grep -vE '^[[:space:]]*$' || true
+        rm -f "$tmp"
+        [ "$rc" -eq 0 ] && return 0
         if [ "$attempt" -lt 3 ]; then
             warn "pip install attempt $attempt/3 failed (likely a slow/unstable connection) — retrying in 5s..."
             sleep 5
@@ -170,17 +178,21 @@ info "Interactive Textual TUI ready — run 'beast' for it, or 'beast --classic'
 info "Installing GUI backend dependencies (FastAPI + pywebview)..."
 if _pip_install_with_retry -e "$PROJECT_ROOT[gui]"; then
     success "GUI backend ready"
-    # Build the React frontend if Node/npm are available
+    # The GUI ships with a prebuilt frontend (beast_gui/frontend/dist), so
+    # 'beast --gui' works out of the box with no Node/npm. If Node/npm is
+    # present we refresh it from source so local edits are picked up.
     FRONTEND_DIR="$PROJECT_ROOT/beast_gui/frontend"
     if [ -f "$FRONTEND_DIR/package.json" ] && command -v npm &>/dev/null; then
-        info "Building GUI frontend…"
+        info "Refreshing GUI frontend from source…"
         if (cd "$FRONTEND_DIR" && npm install --silent 2>/dev/null && npm run build --silent 2>/dev/null); then
             success "GUI frontend built — 'beast --gui' launches the native desktop window"
         else
-            warn "Frontend build failed — 'beast --gui' will fall back to the browser tab until you run: cd beast_gui/frontend && npm install && npm run build"
+            warn "Frontend rebuild failed — the prebuilt GUI still works. To rebuild: cd beast_gui/frontend && npm install && npm run build"
         fi
+    elif [ -f "$FRONTEND_DIR/dist/index.html" ]; then
+        success "GUI frontend ready (prebuilt) — 'beast --gui' works without Node/npm"
     else
-        warn "npm not found — skipping frontend build. To use 'beast --gui' run: cd beast_gui/frontend && npm install && npm run build"
+        warn "No prebuilt GUI found and npm is missing. To build it: cd beast_gui/frontend && npm install && npm run build"
     fi
 else
     warn "GUI deps could not be installed — 'beast' (TUI) and 'beast --classic' still work."
@@ -245,11 +257,22 @@ fi
 info "Fetching Chromium (this may take a minute)..."
 "$VENV_DIR/bin/python" -m playwright install chromium 2>&1 | grep --line-buffered -vE "BEWARE|fallback" || true
 
+# playwright install-deps shells out to `apt`. If another package manager is
+# running (a common cause of the raw "Could not get lock … exit code: 100"
+# error new users hit), detect it and skip cleanly instead of dumping apt's
+# error — the headless browser usually still works, and this is re-runnable.
 info "Hardening system dependencies..."
-if command -v sudo &>/dev/null && [ "$EUID" -ne 0 ]; then
-    sudo "$VENV_DIR/bin/python" -m playwright install-deps chromium 2>&1 | grep --line-buffered -vE "BEWARE|fallback" || true
+_PW_DEPS_HINT="$VENV_DIR/bin/python -m playwright install-deps chromium"
+if pgrep -x apt >/dev/null 2>&1 || pgrep -x apt-get >/dev/null 2>&1 || pgrep -x dpkg >/dev/null 2>&1 || pgrep -x unattended-upgr >/dev/null 2>&1; then
+    warn "Another package manager (apt/dpkg) is running — skipping browser system libs for now. When it finishes, run:  sudo $_PW_DEPS_HINT"
 else
-    "$VENV_DIR/bin/python" -m playwright install-deps chromium 2>&1 | grep --line-buffered -vE "BEWARE|fallback" || true
+    if command -v sudo &>/dev/null && [ "$EUID" -ne 0 ]; then
+        sudo "$VENV_DIR/bin/python" -m playwright install-deps chromium >/dev/null 2>&1 \
+            || warn "Couldn't install browser system libs via apt. The headless browser may still work; if it doesn't, run:  sudo $_PW_DEPS_HINT"
+    else
+        "$VENV_DIR/bin/python" -m playwright install-deps chromium >/dev/null 2>&1 \
+            || warn "Couldn't install browser system libs via apt. If the headless browser fails later, run:  $_PW_DEPS_HINT"
+    fi
 fi
 success "SPA Engine mounted successfully"
 

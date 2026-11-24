@@ -1,6 +1,10 @@
 node_modules/
-dist/
 *.tsbuildinfo
+
+# NOTE: dist/ is intentionally committed (see !dist/** below) so `beast --gui`
+# works out of the box without Node/npm — a fresh clone can launch the GUI
+# immediately. Rebuild it with `npm run build` after changing the frontend.
+!dist/**
 
 # tsc -b emits these next to vite.config.ts — build artifacts, not source
 vite.config.js

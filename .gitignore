@@ -11,6 +11,9 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+# ...but ship the GUI's built frontend so `beast --gui` works with no Node/npm.
+!beast_gui/frontend/dist/
+!beast_gui/frontend/dist/**
 downloads/
 eggs/
 .eggs/
