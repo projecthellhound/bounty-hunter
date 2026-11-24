@@ -343,11 +343,11 @@ export default function MapView({ graph, viewer = null, needsKey = false }: { gr
           </div>
         </>) : onCves ? (<>
           <div className={s.hudCard}>
-            <span className={s.hudLabel}>HEURISTICS</span>
+            <span className={s.hudLabel}>LESSONS</span>
             <b className={s.hudVal}>{num(model.cveTotal)}</b>
           </div>
           <div className={`${s.hudCard} ${s.hudCardHot}`}>
-            <span className={s.hudLabel}>VALIDATED EXPLOITS</span>
+            <span className={s.hudLabel}>VALIDATED</span>
             <b className={`${s.hudVal} ${s.red}`}>{num(model.cveHot)}</b>
           </div>
           <div className={s.hudCard}>
@@ -408,30 +408,30 @@ export default function MapView({ graph, viewer = null, needsKey = false }: { gr
           ))}
         </>)}
         {onCves && group && !cls && (<>
-          <p className={s.tag}>CVEs published in</p>
+          <p className={s.tag}>Lessons learned in</p>
           <h2>{group.id}</h2>
-          <p className={s.figure}>{plural(group.count, "CVE")}{group.hot ? ` · ${num(group.hot)} exploited in the wild` : ""}</p>
-          <p className={s.note}>The dial reads like a clock, January at the top. Each month fans into five bands: exploited in red, ready to check in bright, then likely, possible and unlikely.</p>
+          <p className={s.figure}>{plural(group.count, "lesson")}{group.hot ? ` · ${num(group.hot)} validated` : ""}</p>
+          <p className={s.note}>The dial reads like a clock, January at the top. Each month fans into bands by how confirmed a technique is: validated at the top, then high-confidence and exploratory, down to the ones that didn&apos;t pan out.</p>
           <h3>Months</h3>
           {(group.sub?.classes ?? []).map((c) => (
-            <button key={c.id} className={s.row} onClick={() => setFocus(c)}><span>{c.name}{c.hot ? <em className={s.hot}> · {num(c.hot)} exploited</em> : null}</span><small>{num(c.count)}</small></button>
+            <button key={c.id} className={s.row} onClick={() => setFocus(c)}><span>{c.name}{c.hot ? <em className={s.hot}> · {num(c.hot)} validated</em> : null}</span><small>{num(c.count)}</small></button>
           ))}
         </>)}
         {onCves && cls && !weak && (<>
-          <p className={s.tag}>CVEs published in</p>
+          <p className={s.tag}>Lessons learned in</p>
           <h2>{cls.name} {group?.id}</h2>
-          <p className={s.figure}>{plural(cls.count, "CVE")}{cls.hot ? ` · ${num(cls.hot)} exploited in the wild` : ""}</p>
-          <h3>How this month&apos;s CVEs sort</h3>
+          <p className={s.figure}>{plural(cls.count, "lesson")}{cls.hot ? ` · ${num(cls.hot)} validated` : ""}</p>
+          <h3>How this month&apos;s lessons sort</h3>
           {[...cls.weaks].sort((a, b) => a.band - b.band).map((w) => (
             <button key={w.name} className={s.row} onClick={() => setFocus(w)}><span>{w.name}</span><small>{num(w.count)}</small></button>
           ))}
-          <p className={s.note}>Likelihood is the chance of exploitation in the next 30 days. Open a band to see its CVEs.</p>
+          <p className={s.note}>Bands run from validated (confirmed on more than one target) down to still-exploratory. Open a band to see its lessons.</p>
         </>)}
         {onCves && cls && weak && !leaf && (<>
           <p className={s.tag}>{cls.name} {group?.id} · {weak.tag}</p>
           <h2>{weak.name}</h2>
-          <p className={s.figure}>{plural(weak.count, "CVE")} published in {cls.name} {group?.id}</p>
-          {weak.count > weak.n && <p className={s.note}>The map draws the {num(weak.n)} most likely to be exploited; the list holds all of them.</p>}
+          <p className={s.figure}>{plural(weak.count, "lesson")} learned in {cls.name} {group?.id}</p>
+          {weak.count > weak.n && <p className={s.note}>The map draws the {num(weak.n)} most-confirmed; the list holds all of them.</p>}
           {(() => {
             const per = namesPerPage(typeof window === "undefined" ? 900 : window.innerHeight), pages = Math.max(1, Math.ceil(weak.n / per)), page = Math.min(colPage, pages - 1);
             return pages > 1 ? (

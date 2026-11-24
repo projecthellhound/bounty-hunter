@@ -38,7 +38,7 @@ const LETTER_R = 34;              // radius of a letter's hub
 /** A domain's strip draws at most this many of its subdomains as dots, so it can still open into a disc. */
 export const SURFACE_DOTS = 1500;
 const DOMAIN_PK = 0.42;           // subdomain dots sit this much closer together than report dots: a finer texture, and room for many more
-const BANDS = ["Exploited in the wild", "Ready check, not yet exploited", "Likely to be exploited (10% or more)", "Possible (1 to 10%)", "Unlikely (under 1%)"];
+const BANDS = ["Validated", "High confidence", "Exploratory", "Noted", "Didn't pan out"];
 /** A strip with more dots than this stays a strip when opened: a disc of that many dots would not fit or draw smoothly. */
 const FLAT_OVER = 3000;
 export type Lens = "classes" | "programs" | "cves";

@@ -39,7 +39,7 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
     const lens = refs.lens.current, d = lens === "cves" ? refs.focus.current.group?.sub ?? model.cve : lens === "programs" ? refs.focus.current.group?.sub ?? model.programs : vuln;
     if (d.classes === classes) return;
     ({ classes, weaks, links, rb, gap } = d); G = d.geo; kind = d.kind; isCve = kind === "c" || kind === "y"; isIndex = kind === "p" || kind === "y"; isProg = kind === "s";
-    noun = isCve ? "CVE" : "report";
+    noun = isCve ? "lesson" : "report";
     maxLink = Math.max(1, ...links.map((l) => l.n));
   };
   let ringSpin = 0, ringNow: { c: RNode; x: number; y: number }[] = [];
@@ -217,13 +217,13 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
 
     if (kind === "c" && !f.cls && f.group && G.R1 * k > 90) { // a year's dial carries its year at the centre
       text(f.group.id, ox, oy + 8, intro * 0.92, 44, "center");
-      text(`${num(f.group.count)} CVEs`, ox, oy + 30, intro * 0.55, 11, "center");
-      if (f.group.hot) text(`${num(f.group.hot)} exploited in the wild`, ox, oy + 48, intro, 11.5, "center", RED);
+      text(`${num(f.group.count)} lessons`, ox, oy + 30, intro * 0.55, 11, "center");
+      if (f.group.hot) text(`${num(f.group.hot)} validated`, ox, oy + 48, intro, 11.5, "center", RED);
     }
     if (kind === "y" && !f.cls && G.R1 * k > 90) {
       text(num(model.cveTotal), ox, oy - 4, intro, 30, "center");
-      text("registered CVEs", ox, oy + 16, intro * 0.55, 11, "center");
-      text(`${num(model.cveHot)} exploited in the wild`, ox, oy + 36, intro, 11.5, "center", RED);
+      text("lessons learned", ox, oy + 16, intro * 0.55, 11, "center");
+      text(`${num(model.cveHot)} validated`, ox, oy + 36, intro, 11.5, "center", RED);
     }
     if (isProg && !f.cls && f.group && G.R1 * k > 90) { // a letter's dial carries its letter at the centre
       text(f.group.id, ox, oy + 17, intro * 0.92, 50, "center");
@@ -469,7 +469,7 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
           n: c, ax: bx, ay: by, name: kind === "p" ? clip([...c.weaks].sort((x, y) => y.count - x.count)[0]?.name || c.name, 22) : clip(c.name, 26), nameHot: hot, px: 12.5, pr: c.count, dir: c.a + rotNow, reach: ringOn(f) ? 38 : 13,
           sub: fp ? (got ? `${num(got)} from ${clip(foot!.name, 20)}` : "none from this program") : shares ? `${num(hc!.shared.get(c)!)} shared with ${hc!.name}`
             : kind === "p" ? `${c.id}: ${plural(c.weaks.length, "program")}` // each letter is named by its biggest program
-            : plural(c.count, noun) + (c.hot ? `, ${num(c.hot)} exploited` : "") + (c.prog?.surface ? `, ${num(c.prog.surface)} subdomains` : ""),
+            : plural(c.count, noun) + (c.hot ? `, ${num(c.hot)} validated` : "") + (c.prog?.surface ? `, ${num(c.prog.surface)} subdomains` : ""),
           subHot: fp ? got > 0 : shares, al: shade(c) * (fp && !got ? 0.5 : 1), hot,
         });
       }
@@ -521,7 +521,7 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
         if (hl && buf && hl.i < w.n && !labs.some((q) => q.n === hl)) {
           const d = hl.d, x = buf[hl.i * 2], y = buf[hl.i * 2 + 1];
           labs.push({ n: hl, ax: x, ay: y, id: host ? "" : isCve ? String(d[0]) : `#${d[0]}`, name: clip(host ? String(d[0]) : d[1] || (isCve ? String(d[0]) : "No details stored for this one"), 64),
-            sub: host ? "" : isCve ? `${d[4]}% likely to be exploited` : [d[5], d[2] ? SEVERITIES[d[2]] : "", money(d[3]), d[4] ? `${d[4]} votes` : ""].filter(Boolean).join("   "),
+            sub: host ? "" : isCve ? `${d[4]}% confidence` : [d[5], d[2] ? SEVERITIES[d[2]] : "", money(d[3]), d[4] ? `${d[4]} votes` : ""].filter(Boolean).join("   "),
             subHot: true, al: 1, hot: true, px: 11.5, pr: 0, dir: Math.atan2(y - dcy, x - dcx), reach: 13 });
         }
       }
@@ -611,7 +611,7 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
       g.strokeStyle = `rgba(${RED},0.9)`; circle(x, y, Math.max(4, r + 2.5) + 3.5); g.stroke();
       const [ox, oy] = S(0, 0);
       labs.push({ n: lit, ax: x, ay: y, id: `${lit.id}   ${lit.likely}% likely${lit.check ? "   ready check" : ""}`, name: clip(lit.name || lit.id, 48),
-        sub: "Exploited in the wild. Click to open it.", subHot: true, al: 1, hot: true, px: 12.5, pr: 5e9, dir: Math.atan2(y - oy, x - ox) + Math.PI, reach: 14 });
+        sub: "Validated. Click to open it.", subHot: true, al: 1, hot: true, px: 12.5, pr: 5e9, dir: Math.atan2(y - oy, x - ox) + Math.PI, reach: 14 });
     }
   };
 
@@ -629,7 +629,7 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
       const deg = (a * 180) / Math.PI + (Math.sin(a) > 0 ? -90 : 90); // along the circle, the right way up in the lower half
       text(c.id, x, y + 3, intro * (hi ? 1 : 0.46), 8.5, "center", hi ? RED : INK, [deg, x, y]);
       ringNow.push({ c, x, y });
-      if (hi) labs.push({ n: c, ax: x, ay: y, name: clip(c.name || c.id, 48), sub: "Exploited in the wild. Click for how to check it.", subHot: true, al: 1, hot: true, px: 11.5, pr: 5e9, dir: a, reach: 30 });
+      if (hi) labs.push({ n: c, ax: x, ay: y, name: clip(c.name || c.id, 48), sub: "Validated. Click to open it.", subHot: true, al: 1, hot: true, px: 11.5, pr: 5e9, dir: a, reach: 30 });
     });
   };
 
