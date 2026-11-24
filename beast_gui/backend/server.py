@@ -126,6 +126,62 @@ def get_commands():
     return {"commands": sorted(seen.values(), key=lambda c: (c["category"], c["name"]))}
 
 
+@app.get("/api/brain")
+def get_brain():
+    """Beast's own brain — not a view of any target. Three hubs: Lessons
+    Learned (hellhound/memory/lessons.py's ~/.beast/lessons.json, the
+    closest thing to self-learning it has, since there's no fine-tuning the
+    underlying model), Skills (methodology playbooks in hellhound/skills/ +
+    ~/.beast/skills/, with real usage counts), and Tools (every tool the
+    agent can actually call, TOOL_REGISTRY). This is the ONLY place that
+    knowledge is shown — a target's own findings are a separate, per-target
+    concern rendered inline in the chat's right-hand dock, not here."""
+    from hellhound.memory.lessons import load_lessons
+    from hellhound.core.skills import discover_skills, get_skill_usage_counts, get_short_description
+    from hellhound.core.agent import TOOL_REGISTRY
+
+    items = []
+    for i, l in enumerate(load_lessons()):
+        if not isinstance(l, dict):
+            continue
+        items.append({
+            "id": f"item:lessons:{i}", "hub": "lessons",
+            "label": str(l.get("technique", ""))[:160],
+            "detail": str(l.get("note", ""))[:500],
+            "meta": f"{l.get('outcome', 'worked')} · seen {int(l.get('seen_count', 1) or 1)}×",
+            "tags": l.get("tech_signature") or [],
+        })
+
+    usage = get_skill_usage_counts()
+    for i, (name, s) in enumerate(sorted(discover_skills().items())):
+        items.append({
+            "id": f"item:skills:{i}", "hub": "skills",
+            "label": name,
+            "detail": get_short_description(s.description or ""),
+            "meta": f"used {usage.get(name.lower(), 0)}×" + (" · custom" if s.is_user_defined else ""),
+            "tags": [],
+        })
+
+    for i, (name, spec) in enumerate(sorted(TOOL_REGISTRY.items())):
+        items.append({
+            "id": f"item:tools:{i}", "hub": "tools",
+            "label": name,
+            "detail": str(spec.description or "")[:300],
+            "meta": "",
+            "tags": [],
+        })
+
+    counts: dict = {}
+    for it in items:
+        counts[it["hub"]] = counts.get(it["hub"], 0) + 1
+    hubs = [
+        {"id": "lessons", "label": "Lessons Learned", "count": counts.get("lessons", 0)},
+        {"id": "skills", "label": "Skills", "count": counts.get("skills", 0)},
+        {"id": "tools", "label": "Tools", "count": counts.get("tools", 0)},
+    ]
+    return {"hubs": hubs, "items": items}
+
+
 @app.get("/api/headers")
 def get_headers():
     """Global custom HTTP headers — the same ~/.beast/config.json["global_headers"]

@@ -150,23 +150,21 @@
   transform: translateY(-50%);
   display: flex;
   align-items: center;
-  gap: 6px;
-  max-width: 220px;
-  font-size: 11.5px;
-  color: var(--muted);
+  gap: 7px;
+  max-width: 230px;
   pointer-events: auto;
   cursor: pointer;
 }
 .kg-drill-label.side-left {
   transform: translate(-100%, -50%);
   justify-content: flex-end;
+  text-align: right;
+}
+.kg-drill-label.side-left .kg-drill-text-col {
+  align-items: flex-end;
 }
 .kg-drill-label.side-right {
   transform: translateY(-50%);
-}
-.kg-drill-label.hot {
-  color: var(--text);
-  font-weight: 500;
 }
 .kg-drill-sev {
   width: 6px;
@@ -174,14 +172,36 @@
   border-radius: 50%;
   flex: none;
   background: var(--faint);
+  margin-top: 1px;
 }
 .kg-drill-sev.sev-critical, .kg-drill-sev.sev-high {
   background: var(--red);
 }
-.kg-drill-text {
+.kg-drill-text-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.kg-drill-meta {
+  color: var(--faint);
+  font-size: 9.5px;
+  letter-spacing: 0.3px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 100%;
+}
+.kg-drill-text {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.kg-drill-label.hot .kg-drill-text {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .kg-drill-caption {
@@ -300,4 +320,42 @@
 .kg-detail-report:hover {
   background: var(--panel-2);
   color: var(--text);
+}
+
+.kg-sphere-hint {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  color: var(--faint);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.kg-lesson-outcome {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-weight: 700;
+  background: var(--panel-3);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.kg-lesson-outcome.worked {
+  color: var(--text);
+  border-color: #3a3a3a;
+}
+.kg-lesson-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.kg-lesson-tag {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 10.5px;
 }

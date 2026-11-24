@@ -21,9 +21,8 @@ const GOLDEN = Math.PI * (3 - Math.sqrt(5));
 const R_TARGET_RING = 70; // radius targets sit at, when there's more than one
 const R_HUB = 230; // radius of the ring of category hubs
 const MIN_HUB_SPAN = 0.12; // radians — a 1-finding hub still gets a visible wedge
-const DRILL_DOT_SPACING = 17; // golden-angle disc spacing inside a drilldown
-const LABEL_ROW = 22; // vertical spacing between stacked side-labels, world units
-const LABEL_GAP = 64; // how far past the dot cluster a label column sits
+const DRILL_DOT_SPACING = 30; // golden-angle disc spacing inside a drilldown
+const LABEL_ROW = 30; // vertical spacing between stacked side-labels, world units
 
 export interface GraphData {
   center: string;
@@ -38,13 +37,16 @@ export interface GraphData {
 }
 
 export type PlacedNode = { id: string; x: number; y: number; angle: number };
-export type PlacedHub = PlacedNode & { label: string; count: number; r: number };
+export type PlacedHub = PlacedNode & { label: string; count: number; r: number; span: number };
 export type PlacedFinding = PlacedNode & GraphData["findings"][number] & { r: number };
 export type PlacedSatellite = PlacedNode & { label: string; kind: "host" | "artifact" };
 export type PlacedTarget = PlacedNode & { label: string };
 
 export type CurveLink = { a: string; b: string; p: [number, number, number, number, number, number]; tone: "thread" | "cross" };
-export type DrillLabel = { findingId: string; side: "left" | "right"; x: number; y: number; anchorX: number; anchorY: number };
+export type DrillLabel = {
+  findingId: string; side: "left" | "right"; x: number; y: number; anchorX: number; anchorY: number;
+  title: string; meta: string;
+};
 
 export interface OverviewLayout {
   kind: "overview";
@@ -73,9 +75,15 @@ function angDiff(a: number, b: number): number {
   return Math.abs(d);
 }
 
-/** One golden-angle sunflower step: point j of n, roughly unit-spaced. */
-function sunflower(j: number, spacing: number): [number, number] {
-  const r = spacing * Math.sqrt(j + 0.5);
+/** One golden-angle sunflower step: point j of n, roughly unit-spaced. The
+ * plain sqrt(j) radius only reads as a "starburst" once there are dozens of
+ * points pushing each other outward — at Beast's scale (1-10 findings per
+ * hub) that formula puts everything in a tight knot on top of the center,
+ * so floor the radius (scaled by how many points there are, so a bigger
+ * hub still gets a visibly bigger spread) instead of letting it start at 0. */
+function sunflower(j: number, n: number, spacing: number): [number, number] {
+  const floor = 55 + Math.sqrt(n) * 14;
+  const r = Math.max(floor, spacing * Math.sqrt(j + 0.5) + floor * 0.4);
   const a = j * GOLDEN;
   return [Math.cos(a) * r, Math.sin(a) * r];
 }
@@ -135,7 +143,7 @@ export function buildOverview(data: GraphData): OverviewLayout {
     const angle = cursor + span / 2;
     cursor += span;
     const [x, y] = pol(R_HUB, angle);
-    return { ...h, x, y, angle, r: 10 + Math.sqrt(h.count) * 5 };
+    return { ...h, x, y, angle, span, r: 10 + Math.sqrt(h.count) * 5 };
   });
 
   // target -> hub threads (which categories a target actually contributed to)
@@ -186,7 +194,7 @@ export function buildDrilldown(data: GraphData, hubId: string): DrilldownLayout 
   const mine = data.findings.filter((f) => f.hub === hubId);
 
   const findings: PlacedFinding[] = mine.map((f, j) => {
-    const [x, y] = sunflower(j, DRILL_DOT_SPACING);
+    const [x, y] = sunflower(j, mine.length, DRILL_DOT_SPACING);
     return { ...f, x, y, angle: Math.atan2(y, x), r: f.severity === "critical" ? 7 : 5.5 };
   });
 
@@ -215,10 +223,14 @@ export function buildDrilldown(data: GraphData, hubId: string): DrilldownLayout 
 
   // Side columns: left (x < 0) vs right (x >= 0), each stacked top-to-bottom
   // in dot order so labels never collide, regardless of how tight the
-  // sunflower packed the actual dots.
+  // starburst packed the actual dots — pushed well clear of the cluster
+  // (proportional to its own reach, not a fixed offset) so the view reads
+  // as "dots in the middle, labels at the edges" the way the reference does.
   const left = findings.filter((f) => f.x < 0).sort((a, b) => a.y - b.y);
   const right = findings.filter((f) => f.x >= 0).sort((a, b) => a.y - b.y);
-  const labelX = dotReach + LABEL_GAP;
+  const labelGap = Math.max(110, dotReach * 0.85);
+  const labelX = dotReach + labelGap;
+  const shortHost = (hostIds2: string[]) => hostIds2[0]?.replace(/^host:/, "") || "";
   const stack = (list: PlacedFinding[], side: "left" | "right"): DrillLabel[] => {
     const topY = -((list.length - 1) * LABEL_ROW) / 2;
     return list.map((f, i) => ({
@@ -226,10 +238,12 @@ export function buildDrilldown(data: GraphData, hubId: string): DrilldownLayout 
       x: side === "left" ? -labelX : labelX,
       y: topY + i * LABEL_ROW,
       anchorX: f.x, anchorY: f.y,
+      title: f.label || f.hub,
+      meta: [f.severity.toUpperCase(), f.report_target, shortHost(f.hosts)].filter(Boolean).join(" · "),
     }));
   };
   const labels = [...stack(left, "left"), ...stack(right, "right")];
 
-  const worldRadius = Math.max(160, dotReach + 70) + LABEL_GAP + 140;
+  const worldRadius = Math.max(160, dotReach + 70) + labelGap + 160;
   return { kind: "drilldown", hub: hubMeta, findings, satellites, links, labels, worldRadius };
 }

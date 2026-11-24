@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name="hellhound",
     version="12.7.0",
-    description="HELLHOUND — Autonomous AI Bug Bounty Reconnaissance & Triage Framework",
+    description="HELLHOUND — Autonomous AI Bug Bounty Agent (Recon, Exploitation, and Reporting)",
     packages=find_packages(),
     include_package_data=True,
     install_requires=[

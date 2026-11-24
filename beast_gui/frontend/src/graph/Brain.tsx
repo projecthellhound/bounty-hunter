@@ -1,37 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { buildDrilldown, buildOverview, GraphData, GraphLayout, PlacedFinding, subgraph } from "./layout";
+import { buildBrainDrilldown, buildBrainOverview, BrainData, BrainLayout, PlacedItem } from "./brainLayout";
 import "./KnowledgeGraph.css";
 
-const SEV_COLOR: Record<string, string> = {
-  critical: "#e5484d",
-  high: "#e5484d",
-  medium: "#d0a060",
-  low: "#8a8a8a",
-  info: "#5e5e5e",
-  informational: "#5e5e5e",
-};
-
 interface Props {
-  activeTarget?: string;
   apiBase: string;
-  onViewReport: (title: string, file: string, target: string) => void;
 }
 
 type Cam = { x: number; y: number; scale: number };
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const camDist = (a: Cam, b: Cam) => Math.hypot(a.x - b.x, a.y - b.y) + Math.abs(a.scale - b.scale) * 400;
+const hash01 = (i: number) => { const v = Math.sin(i * 127.1 + 311.7) * 43758.5453; return v - Math.floor(v); };
 
-export default function KnowledgeGraph({ activeTarget, apiBase, onViewReport }: Props) {
-  // This is the whole-Beast knowledge graph, not a view of whatever target
-  // happens to be active in the sidebar — fetched once, filtered and
-  // drilled into entirely client-side.
-  const [data, setData] = useState<GraphData | null>(null);
-  const [filterTarget, setFilterTarget] = useState<string>("");
-  const [filterOpen, setFilterOpen] = useState(false);
+/** The only place Beast's own brain is shown — lessons it's learned, the
+ * methodology skills it can draw on, and the tools it can call. No target
+ * ever appears here and there is no toggle to make one appear; a target's
+ * own findings are a separate view, in the chat's right-hand dock. */
+export default function Brain({ apiBase }: Props) {
+  const [data, setData] = useState<BrainData | null>(null);
   const [drillHub, setDrillHub] = useState<string | null>(null);
   const [cam, setCam] = useState<Cam>({ x: 0, y: 0, scale: 1 });
   const [hover, setHover] = useState<string | null>(null);
-  const [selected, setSelected] = useState<PlacedFinding | null>(null);
+  const [selected, setSelected] = useState<PlacedItem | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -39,27 +28,23 @@ export default function KnowledgeGraph({ activeTarget, apiBase, onViewReport }: 
   const dragStart = useRef({ x: 0, y: 0, camX: 0, camY: 0 });
   const didDrag = useRef(false);
 
-  // Smooth-motion state lives in refs, read fresh every animation frame —
-  // decoupled from React's render cycle so the canvas stays at 60fps
-  // regardless of how often the surrounding UI re-renders.
   const camRef = useRef(cam);
   const camTarget = useRef(cam);
   const hoverEase = useRef(0);
   const pulsePhase = useRef(0);
-  const layoutRef = useRef<GraphLayout | null>(null);
+  const layoutRef = useRef<BrainLayout | null>(null);
   const hoverRef = useRef<string | null>(null);
-  const selectedRef = useRef<PlacedFinding | null>(null);
+  const selectedRef = useRef<PlacedItem | null>(null);
 
   useEffect(() => {
-    fetch(`${apiBase}/api/graph`).then((r) => r.json()).then(setData).catch(() => setData(null));
+    fetch(`${apiBase}/api/brain`).then((r) => r.json()).then(setData).catch(() => setData(null));
   }, [apiBase]);
 
-  const filteredData = useMemo(() => (data ? subgraph(data, filterTarget || null) : null), [data, filterTarget]);
-  const layout: GraphLayout | null = useMemo(() => {
-    if (!filteredData) return null;
-    if (drillHub) return buildDrilldown(filteredData, drillHub);
-    return buildOverview(filteredData);
-  }, [filteredData, drillHub]);
+  const layout: BrainLayout | null = useMemo(() => {
+    if (!data) return null;
+    if (drillHub) return buildBrainDrilldown(data, drillHub);
+    return buildBrainOverview(data);
+  }, [data, drillHub]);
   useEffect(() => { layoutRef.current = layout; }, [layout]);
   useEffect(() => { hoverRef.current = hover; }, [hover]);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
@@ -72,8 +57,6 @@ export default function KnowledgeGraph({ activeTarget, apiBase, onViewReport }: 
     return { x: width / 2, y: height / 2, scale };
   }, []);
 
-  // Re-fit (eased) whenever the layout changes — including the overview <->
-  // drilldown transition, so clicking a hub reads as "zooming into it".
   useEffect(() => {
     if (!layout) return;
     camTarget.current = fitCam(layout.worldRadius);
@@ -84,7 +67,6 @@ export default function KnowledgeGraph({ activeTarget, apiBase, onViewReport }: 
   const toScreen = useCallback((x: number, y: number) => [x * cam.scale + cam.x, y * cam.scale + cam.y], [cam]);
   const toWorld = useCallback((sx: number, sy: number, c: Cam) => [(sx - c.x) / c.scale, (sy - c.y) / c.scale], []);
 
-  // ── one continuous render loop ───────────────────────────────────────────
   useEffect(() => {
     let raf = 0, last = performance.now();
     const tick = (now: number) => {
@@ -132,46 +114,69 @@ export default function KnowledgeGraph({ activeTarget, apiBase, onViewReport }: 
     ctx.translate(c.x, c.y);
     ctx.scale(c.scale, c.scale);
 
-    // Outer bezel — a quiet ring framing the dial, like a dashboard face.
+    const bezelR = l.worldRadius - 10;
     ctx.beginPath();
     ctx.strokeStyle = "#242424";
     ctx.lineWidth = 1 / c.scale;
-    ctx.arc(0, 0, l.worldRadius - 10, 0, Math.PI * 2);
+    ctx.arc(0, 0, bezelR, 0, Math.PI * 2);
     ctx.stroke();
+    ctx.strokeStyle = "#333333";
+    const tickCount = 72;
+    for (let i = 0; i < tickCount; i++) {
+      const a = (i / tickCount) * Math.PI * 2;
+      const long = i % 6 === 0;
+      const r0 = bezelR - (long ? 10 : 5), r1 = bezelR;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * r0, Math.sin(a) * r0);
+      ctx.lineTo(Math.cos(a) * r1, Math.sin(a) * r1);
+      ctx.stroke();
+    }
 
     if (l.kind === "overview") {
-      for (const link of l.links) {
-        const touches = activeId && (link.a === activeId || link.b === activeId);
-        ctx.beginPath();
-        ctx.strokeStyle = touches ? "#e5484d" : link.tone === "cross" ? "#8a8a8a" : "#3a3a3a";
-        ctx.globalAlpha = touches ? 0.6 + 0.3 * ease : link.tone === "cross" ? 0.22 : 0.18;
-        ctx.lineWidth = (touches ? lerp(0.8, 1.8, ease) : link.tone === "cross" ? 0.9 : 0.7) / c.scale;
-        const [x0, y0, x1, y1, x2, y2] = link.p;
-        ctx.moveTo(x0, y0);
-        ctx.quadraticCurveTo(x1, y1, x2, y2);
-        ctx.stroke();
-      }
-      ctx.globalAlpha = 1;
-
-      for (const t of l.targets) {
-        const isCurrent = activeTarget && t.label === activeTarget;
-        ctx.save();
-        ctx.shadowColor = "#e5484d";
-        ctx.shadowBlur = (isCurrent ? 18 : 9) * pulse;
-        ctx.beginPath();
-        ctx.fillStyle = "#f5f5f5";
-        ctx.arc(t.x, t.y, 7, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-        ctx.beginPath();
-        ctx.strokeStyle = "#e5484d";
-        ctx.lineWidth = (isCurrent ? 2 : 1.2) / c.scale;
-        ctx.arc(t.x, t.y, 11 * pulse, 0, Math.PI * 2);
-        ctx.stroke();
-      }
+      // The brain's heart — a soft glow at the center, standing in for
+      // Beast itself (no single target node makes sense here).
+      ctx.save();
+      ctx.shadowColor = "#e5484d";
+      ctx.shadowBlur = 20 * pulse;
+      ctx.beginPath();
+      ctx.fillStyle = "#f5f5f5";
+      ctx.arc(0, 0, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      ctx.beginPath();
+      ctx.strokeStyle = "#e5484d";
+      ctx.lineWidth = 1.4 / c.scale;
+      ctx.arc(0, 0, 13 * pulse, 0, Math.PI * 2);
+      ctx.stroke();
 
       for (const h of l.hubs) {
         const isHover = h.id === activeId;
+        ctx.beginPath();
+        ctx.strokeStyle = "#3a3a3a";
+        ctx.globalAlpha = 0.3;
+        ctx.lineWidth = 0.8 / c.scale;
+        ctx.moveTo(0, 0);
+        ctx.lineTo(h.x, h.y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+
+        const nbars = Math.max(4, Math.min(14, Math.round(Math.sqrt(h.count) * 2)));
+        const hubDist = Math.hypot(h.x, h.y);
+        for (let i = 0; i < nbars; i++) {
+          const seed = h.id.length * 97 + i;
+          const a = h.angle - h.span / 2 + ((i + 0.5) / nbars) * h.span;
+          const barLen = 10 + hash01(seed) * 34;
+          const r0 = hubDist + h.r + 7, r1 = r0 + barLen;
+          ctx.beginPath();
+          ctx.strokeStyle = "#3a3a3a";
+          ctx.globalAlpha = 0.5 + hash01(seed + 50) * 0.3;
+          ctx.lineWidth = Math.max(1.4, Math.min(4.5, h.r * 0.14)) / c.scale;
+          ctx.moveTo(Math.cos(a) * r0, Math.sin(a) * r0);
+          ctx.lineTo(Math.cos(a) * r1, Math.sin(a) * r1);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+
         ctx.save();
         ctx.shadowColor = "#ffffff";
         ctx.shadowBlur = isHover ? lerp(0, 14, ease) : 0;
@@ -185,12 +190,10 @@ export default function KnowledgeGraph({ activeTarget, apiBase, onViewReport }: 
         ctx.restore();
         ctx.beginPath();
         ctx.fillStyle = "#555555";
-        ctx.arc(h.x, h.y, Math.max(1.6, h.r * 0.24), 0, Math.PI * 2);
+        ctx.arc(h.x, h.y, Math.max(1.6, h.r * 0.22), 0, Math.PI * 2);
         ctx.fill();
       }
     } else {
-      // Drilldown: leader lines first (dotted, quiet), then cross-links,
-      // then satellites, then the findings themselves, biggest/brightest on top.
       ctx.save();
       ctx.setLineDash([1.2 / c.scale, 3 / c.scale]);
       ctx.strokeStyle = "#4a4a4a";
@@ -208,8 +211,8 @@ export default function KnowledgeGraph({ activeTarget, apiBase, onViewReport }: 
         const touches = activeId && (link.a === activeId || link.b === activeId);
         ctx.beginPath();
         ctx.strokeStyle = touches ? "#e5484d" : "#8a8a8a";
-        ctx.globalAlpha = touches ? 0.6 + 0.3 * ease : 0.18;
-        ctx.lineWidth = (touches ? lerp(0.8, 1.8, ease) : 0.8) / c.scale;
+        ctx.globalAlpha = touches ? 0.6 + 0.3 * ease : 0.16;
+        ctx.lineWidth = (touches ? lerp(0.8, 1.8, ease) : 0.7) / c.scale;
         const [x0, y0, x1, y1, x2, y2] = link.p;
         ctx.moveTo(x0, y0);
         ctx.quadraticCurveTo(x1, y1, x2, y2);
@@ -217,14 +220,6 @@ export default function KnowledgeGraph({ activeTarget, apiBase, onViewReport }: 
       }
       ctx.globalAlpha = 1;
 
-      for (const s of l.satellites) {
-        ctx.beginPath();
-        ctx.fillStyle = s.kind === "host" ? "#949494" : "#5e5e5e";
-        ctx.arc(s.x, s.y, 3, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // Hub caption, re-centered — the thing this whole view opened from.
       ctx.save();
       ctx.shadowColor = "#e5484d";
       ctx.shadowBlur = 14 * pulse;
@@ -239,30 +234,29 @@ export default function KnowledgeGraph({ activeTarget, apiBase, onViewReport }: 
       ctx.arc(0, 0, 14 * pulse, 0, Math.PI * 2);
       ctx.stroke();
 
-      for (const f of l.findings) {
-        const isActive = f.id === activeId;
+      for (const it of l.items) {
+        const isActive = it.id === activeId;
         const grow = isActive ? lerp(1, 1.7, ease) : 1;
         ctx.beginPath();
-        ctx.fillStyle = SEV_COLOR[f.severity] || "#949494";
-        ctx.globalAlpha = isActive ? lerp(0.85, 1, ease) : 0.9;
-        ctx.arc(f.x, f.y, f.r * grow, 0, Math.PI * 2);
+        ctx.fillStyle = isActive ? "#ffffff" : "#b5b5b5";
+        ctx.globalAlpha = isActive ? 1 : 0.85;
+        ctx.arc(it.x, it.y, it.r * grow, 0, Math.PI * 2);
         ctx.fill();
         if (isActive && ease > 0.02) {
           ctx.beginPath();
           ctx.globalAlpha = ease;
-          ctx.strokeStyle = "#ffffff";
+          ctx.strokeStyle = "#e5484d";
           ctx.lineWidth = 1.2 / c.scale;
-          ctx.arc(f.x, f.y, f.r * grow + 2.5, 0, Math.PI * 2);
+          ctx.arc(it.x, it.y, it.r * grow + 2.5, 0, Math.PI * 2);
           ctx.stroke();
         }
       }
       ctx.globalAlpha = 1;
     }
     ctx.restore();
-  }, [activeTarget]);
+  }, []);
 
-  // ── interaction ──────────────────────────────────────────────────────────
-  const hitTest = useCallback((sx: number, sy: number): { id: string; finding?: PlacedFinding } | null => {
+  const hitTest = useCallback((sx: number, sy: number): { id: string; item?: PlacedItem } | null => {
     const l = layoutRef.current;
     if (!l) return null;
     const [wx, wy] = toWorld(sx, sy, camRef.current);
@@ -273,12 +267,12 @@ export default function KnowledgeGraph({ activeTarget, apiBase, onViewReport }: 
       }
       return null;
     }
-    let best: PlacedFinding | null = null, bestD = tol;
-    for (const f of l.findings) {
-      const d = Math.hypot(f.x - wx, f.y - wy);
-      if (d < bestD) { bestD = d; best = f; }
+    let best: PlacedItem | null = null, bestD = tol;
+    for (const it of l.items) {
+      const d = Math.hypot(it.x - wx, it.y - wy);
+      if (d < bestD) { bestD = d; best = it; }
     }
-    return best ? { id: best.id, finding: best } : null;
+    return best ? { id: best.id, item: best } : null;
   }, [toWorld]);
 
   const onMouseDown = (e: React.MouseEvent) => {
@@ -310,7 +304,7 @@ export default function KnowledgeGraph({ activeTarget, apiBase, onViewReport }: 
     const hit = hitTest(e.clientX - rect.left, e.clientY - rect.top);
     if (!hit) { setSelected(null); return; }
     if (layoutRef.current?.kind === "overview") { setDrillHub(hit.id); return; }
-    setSelected(hit.finding || null);
+    setSelected(hit.item || null);
   };
   const onWheel = (e: React.WheelEvent) => {
     e.preventDefault();
@@ -334,21 +328,16 @@ export default function KnowledgeGraph({ activeTarget, apiBase, onViewReport }: 
   }) : [];
   const drillLabels = layout?.kind === "drilldown" ? layout.labels.map((lab) => {
     const [sx, sy] = toScreen(lab.x, lab.y);
-    const f = layout.findings.find((ff) => ff.id === lab.findingId)!;
-    return { ...lab, sx, sy, f };
+    const it = layout.items.find((ii) => ii.id === lab.itemId)!;
+    return { ...lab, sx, sy, it };
   }) : [];
   const drillCaption = layout?.kind === "drilldown" ? (() => {
     const [sx, sy] = toScreen(0, 0);
     return { x: sx, y: sy - 34, label: layout.hub.label, count: layout.hub.count };
   })() : null;
 
-  const targetOptions = useMemo(
-    () => [...(data?.targets || [])].sort((a, b) => a.label.localeCompare(b.label)),
-    [data]
-  );
-  const filterLabel = filterTarget
-    ? targetOptions.find((t) => t.id === filterTarget)?.label || filterTarget
-    : `All of Beast (${data?.targets.length ?? 0} targets)`;
+  const totalKnown = (data?.hubs || []).reduce((s, h) => s + h.count, 0);
+  const activeItem = selected;
 
   return (
     <div className="kg-root">
@@ -372,87 +361,60 @@ export default function KnowledgeGraph({ activeTarget, apiBase, onViewReport }: 
               onClick={(e) => { e.stopPropagation(); setDrillHub(l.id); }}
             >
               <span className="kg-hub-name">{l.label}</span>
-              <span className="kg-hub-count">{l.count} finding{l.count === 1 ? "" : "s"}</span>
+              <span className="kg-hub-count">{l.count}</span>
             </div>
           ))}
           {drillLabels.map((lab) => (
             <div
-              key={lab.findingId}
-              className={`kg-drill-label side-${lab.side} ${(selected?.id || hover) === lab.findingId ? "hot" : ""}`}
+              key={lab.itemId}
+              className={`kg-drill-label side-${lab.side} ${(selected?.id || hover) === lab.itemId ? "hot" : ""}`}
               style={{ left: lab.sx, top: lab.sy }}
-              onClick={(e) => { e.stopPropagation(); setSelected(lab.f); }}
+              onClick={(e) => { e.stopPropagation(); setSelected(lab.it); }}
             >
-              <span className={`kg-drill-sev sev-${lab.f.severity}`} />
-              <span className="kg-drill-text">{lab.f.label || lab.f.hub}</span>
+              <span className="kg-drill-sev" />
+              <span className="kg-drill-text-col">
+                <span className="kg-drill-meta">{lab.meta}</span>
+                <span className="kg-drill-text">{lab.title}</span>
+              </span>
             </div>
           ))}
           {drillCaption && (
             <div className="kg-drill-caption" style={{ left: drillCaption.x, top: drillCaption.y }}>
               <div className="kg-drill-caption-name">{drillCaption.label}</div>
-              <div className="kg-drill-caption-count">{drillCaption.count} finding{drillCaption.count === 1 ? "" : "s"}</div>
+              <div className="kg-drill-caption-count">{drillCaption.count}</div>
             </div>
           )}
         </div>
 
         <div className="kg-toolbar" onClick={(e) => e.stopPropagation()}>
           {drillHub && (
-            <button className="kg-back" onClick={() => setDrillHub(null)}>← all categories</button>
+            <button className="kg-back" onClick={() => setDrillHub(null)}>← brain</button>
           )}
-          <div className="kg-filter">
-            <button className="kg-filter-btn" onClick={() => setFilterOpen((v) => !v)}>
-              {filterLabel} <span className="kg-filter-caret">▾</span>
-            </button>
-            {filterOpen && (
-              <div className="kg-filter-menu" onMouseLeave={() => setFilterOpen(false)}>
-                <button
-                  className={!filterTarget ? "active" : ""}
-                  onClick={() => { setFilterTarget(""); setFilterOpen(false); }}
-                >
-                  All of Beast ({data?.targets.length ?? 0} targets)
-                </button>
-                {targetOptions.map((t) => (
-                  <button
-                    key={t.id}
-                    className={filterTarget === t.id ? "active" : ""}
-                    onClick={() => { setFilterTarget(t.id); setFilterOpen(false); }}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
 
-        {!data && <div className="kg-empty">loading knowledge graph…</div>}
-        {data && layout?.kind === "overview" && layout.hubs.length === 0 && (
+        {!data && <div className="kg-empty">loading what Beast has learned…</div>}
+        {data && totalKnown === 0 && (
           <div className="kg-empty">
-            {filterTarget ? "No recorded findings yet for this target." : "No findings recorded anywhere yet — the graph fills in as Beast records them."}
+            Nothing learned yet — no hunts recorded. Run Beast against a target and this fills in: lessons from
+            what worked and failed, the skills it draws on, and the tools it has available.
           </div>
         )}
         <button className="kg-refit" onClick={(e) => { e.stopPropagation(); refit(); }} title="Fit to view">⤢</button>
       </div>
 
-      {selected && (
+      {activeItem && (
         <div className="kg-detail">
           <div className="kg-detail-head">
-            <span className={`kg-detail-sev sev-${selected.severity}`}>{selected.severity}</span>
+            <span className="kg-lesson-outcome">{activeItem.hub}</span>
             <button className="kg-detail-close" onClick={() => setSelected(null)}>✕</button>
           </div>
-          <div className="kg-detail-title">{selected.label || selected.hub}</div>
-          {selected.target && <div className="kg-detail-row">target: {selected.target.replace(/^target:/, "")}</div>}
-          {selected.endpoint && <div className="kg-detail-row">{selected.endpoint}</div>}
-          {selected.note && <div className="kg-detail-note">{selected.note}</div>}
-          {selected.hosts.length > 0 && (
-            <div className="kg-detail-row">hosts: {selected.hosts.map((h) => h.replace(/^host:/, "")).join(", ")}</div>
-          )}
-          {selected.report && (
-            <button
-              className="kg-detail-report"
-              onClick={() => onViewReport(selected.label || "report", selected.report!, selected.report_target)}
-            >
-              view report
-            </button>
+          <div className="kg-detail-title">{activeItem.label}</div>
+          {activeItem.meta && <div className="kg-detail-row">{activeItem.meta}</div>}
+          {activeItem.detail && <div className="kg-detail-note">{activeItem.detail}</div>}
+          {activeItem.tags.length > 0 && (
+            <div className="kg-lesson-tags">
+              {activeItem.tags.map((t) => <span key={t} className="kg-lesson-tag">{t}</span>)}
+            </div>
           )}
         </div>
       )}
