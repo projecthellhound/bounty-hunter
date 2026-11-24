@@ -714,44 +714,88 @@ async def ws_endpoint(ws: WebSocket):
         pump_task.cancel()
 
 
-def _ensure_brain_running():
-    """Ensure BeastBrain visualization service is running on port 3220."""
+_brain_proc: Optional[subprocess.Popen] = None
+
+
+def _is_brain_listening(port: int = 3220) -> bool:
     import socket
-    import subprocess
-    import shutil
     try:
         with socket.socket() as s:
             s.settimeout(0.3)
-            if s.connect_ex(("127.0.0.1", 3220)) == 0:
-                return
+            return s.connect_ex(("127.0.0.1", port)) == 0
     except Exception:
-        pass
+        return False
+
+
+def _ensure_brain_running() -> bool:
+    """Ensure BeastBrain visualization service is running on port 3220."""
+    global _brain_proc
+    if _is_brain_listening(3220):
+        return True
 
     brain_dir = _REPO_ROOT.parent / "beast-brain"
     if not brain_dir.is_dir():
         brain_dir = Path("/home/joe/Project-Hellhound/beast-brain")
     if not brain_dir.is_dir():
-        return
+        return False
 
-    pnpm_bin = shutil.which("pnpm") or "/home/joe/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback/pnpm"
-    if os.path.exists(pnpm_bin):
-        env = os.environ.copy()
-        fallback_path = "/home/joe/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback"
-        if fallback_path not in env.get("PATH", ""):
-            env["PATH"] = f"{fallback_path}:{env.get('PATH', '')}"
-        subprocess.Popen(
-            [pnpm_bin, "dev", "--port", "3220"],
+    next_shim = brain_dir / "node_modules" / ".bin" / "next"
+    if not next_shim.exists():
+        return False
+
+    try:
+        log_file = open("/tmp/beast-brain.log", "a")
+        _brain_proc = subprocess.Popen(
+            ["/bin/sh", str(next_shim), "dev", "--port", "3220"],
             cwd=str(brain_dir),
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            preexec_fn=os.setsid if hasattr(os, "setsid") else None,
         )
+        return True
+    except Exception:
+        return False
+
+
+def _stop_brain():
+    global _brain_proc
+    if _brain_proc and _brain_proc.poll() is None:
+        try:
+            import signal
+            if hasattr(os, "killpg") and hasattr(os, "getpgid"):
+                os.killpg(os.getpgid(_brain_proc.pid), signal.SIGTERM)
+            else:
+                _brain_proc.terminate()
+        except Exception:
+            pass
+        _brain_proc = None
+
+
+import atexit
+atexit.register(_stop_brain)
 
 
 @app.get("/api/brain/url")
 def get_brain_url():
     _ensure_brain_running()
     return {"url": "http://localhost:3220"}
+
+
+@app.get("/api/brain/status")
+def get_brain_status():
+    started = _ensure_brain_running()
+    is_up = _is_brain_listening(3220)
+    return {
+        "online": is_up,
+        "started": started,
+        "url": "http://localhost:3220"
+    }
+
+
+@app.post("/api/brain/start")
+def start_brain_endpoint():
+    _ensure_brain_running()
+    return {"status": "starting", "url": "http://localhost:3220"}
 
 
 # ── serve the built frontend from this same process ───────────────────────
@@ -788,6 +832,7 @@ def _wait_until_up(port: int, timeout: float = 15.0) -> bool:
 def main():
     """Headless/web mode: just serve. A browser (or the --web CLI path) points at it."""
     import uvicorn
+    _ensure_brain_running()
     uvicorn.run(app, host="127.0.0.1", port=_resolve_port(), log_level="warning")
 
 
@@ -799,6 +844,7 @@ def run_desktop(title: str = "BEAST") -> bool:
     backend requires it). Returns False if no native webview backend is
     available, so the caller can fall back to opening a browser.
     """
+    _ensure_brain_running()
     try:
         import webview
         from webview.guilib import initialize
