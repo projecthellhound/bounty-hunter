@@ -363,6 +363,80 @@ _bridges: Dict[str, MCPBridge] = {}
 _server_configs: Dict[str, Dict[str, Any]] = {}
 _reconnect_lock = threading.Lock()
 
+# The local HexBrain deployment we auto-start lives as a plain Next app; its
+# own corpus DB is already populated, so pointing the beast's hexbrain MCP at
+# it gives the full 15k+ disclosed-report corpus locally — unlimited and with
+# no API key, replacing the rate-limited hosted service.
+_local_hexbrain_proc = None
+DEFAULT_LOCAL_HEXBRAIN_PATH = "/home/joe/HACK-HUB/bug-hunting/Tools/hexbrainai.com"
+DEFAULT_LOCAL_HEXBRAIN_PORT = 3230
+
+
+def ensure_local_hexbrain(server_cfg: Dict[str, Any], emit: Any = None) -> bool:
+    """When the hexbrain MCP points at a local deployment (its config carries a
+    'local_path'), make sure that Next app is actually running on its port
+    before we try to connect. Returns True if the port is up (already or after
+    we started it). Best-effort and non-fatal — on failure the connect simply
+    falls through and reports its own error."""
+    global _local_hexbrain_proc
+    import os
+    import socket
+    import subprocess
+    import time
+
+    path = str(server_cfg.get("local_path") or "").strip()
+    port = int(server_cfg.get("local_port") or DEFAULT_LOCAL_HEXBRAIN_PORT)
+    if not path:
+        return False
+
+    def _listening() -> bool:
+        try:
+            with socket.socket() as s:
+                s.settimeout(0.3)
+                return s.connect_ex(("127.0.0.1", port)) == 0
+        except Exception:
+            return False
+
+    if _listening():
+        return True
+    if not os.path.isdir(path):
+        if emit and hasattr(emit, "warn"):
+            emit.warn(f"[!] Local HexBrain path not found: {path}")
+        return False
+    next_shim = os.path.join(path, "node_modules", ".bin", "next")
+    if not os.path.exists(next_shim):
+        if emit and hasattr(emit, "warn"):
+            emit.warn(f"[!] Local HexBrain at {path} has no node_modules — run 'pnpm install' there once.")
+        return False
+
+    env = os.environ.copy()
+    env["HEXBRAIN_OPEN_API"] = "true"  # no key, no rate limit for local use
+    try:
+        log_file = open("/tmp/hexbrain-local.log", "a")
+        _local_hexbrain_proc = subprocess.Popen(
+            ["/bin/sh", next_shim, "dev", "--port", str(port)],
+            cwd=path,
+            env=env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            preexec_fn=os.setsid if hasattr(os, "setsid") else None,
+        )
+    except Exception as e:
+        if emit and hasattr(emit, "warn"):
+            emit.warn(f"[!] Couldn't start local HexBrain: {e}")
+        return False
+
+    deadline = time.time() + 30.0
+    while time.time() < deadline:
+        if _listening():
+            if emit and hasattr(emit, "info"):
+                emit.info(f"[*] Local HexBrain started on :{port} — full corpus, unlimited, no key.")
+            return True
+        time.sleep(0.5)
+    if emit and hasattr(emit, "warn"):
+        emit.warn(f"[!] Local HexBrain didn't come up on :{port} in time (see /tmp/hexbrain-local.log).")
+    return False
+
 
 def probe_http_mcp_server(base_url: str, timeout: float = 6.0) -> Optional[Dict[str, Any]]:
     """

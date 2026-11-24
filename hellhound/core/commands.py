@@ -1907,7 +1907,8 @@ def handle_apikey(args: List[str], session_context: Dict[str, Any], emit: Any) -
 def handle_mcp(args: List[str], session_context: Dict[str, Any], emit: Any) -> Dict[str, Any]:
     """
     /mcp                            — show Burp/Caido configuration + live status
-    /mcp hexbrain <api_key>          — connect HexBrain (hexbrainai.com): 15k+ disclosed HackerOne reports, playbooks, payloads, program payouts (free key at /account)
+    /mcp hexbrain local [path] [port] — use a LOCAL HexBrain deployment: full 15k+ report corpus, unlimited, no key, no rate limit (auto-started)
+    /mcp hexbrain <api_key>          — connect the hosted HexBrain (hexbrainai.com): same corpus, but rate-limited (free key at /account)
     /mcp hexbrain remove            — remove the HexBrain entry from config
     /mcp burp [host_or_url]          — configure Burp's MCP server (auto-detects transport; default http://127.0.0.1:9876)
     /mcp burp remove                — remove the Burp entry from config
@@ -2071,6 +2072,52 @@ def handle_mcp(args: List[str], session_context: Dict[str, Any], emit: Any) -> D
             if not is_json:
                 emit.info("HexBrain wasn't configured.")
             return {"status": "success", "removed": None}
+
+        # ── /mcp hexbrain local [path] [port] — point at a LOCAL deployment ──
+        # Serves the full disclosed-report corpus from this machine: unlimited,
+        # no API key, no per-day rate limit. The local Next app is auto-started
+        # (and re-ensured on every launch) before the beast connects.
+        if sub and sub[0].lower() == "local":
+            from hellhound.core.mcp_bridge import (
+                DEFAULT_LOCAL_HEXBRAIN_PATH, DEFAULT_LOCAL_HEXBRAIN_PORT, ensure_local_hexbrain,
+            )
+            path = (sub[1].strip() if len(sub) > 1 else "") or DEFAULT_LOCAL_HEXBRAIN_PATH
+            try:
+                port = int(sub[2]) if len(sub) > 2 else DEFAULT_LOCAL_HEXBRAIN_PORT
+            except ValueError:
+                port = DEFAULT_LOCAL_HEXBRAIN_PORT
+            if not os.path.isdir(path):
+                if not is_json:
+                    emit.warn(f"Local HexBrain path not found: {path}  "
+                              f"(usage: /mcp hexbrain local [path] [port])")
+                return {"status": "error", "error": "local_path not found"}
+            server_cfg = {
+                "transport": "streamable_http",
+                "url": f"http://localhost:{port}/api/mcp",
+                "local_path": path,
+                "local_port": port,
+            }
+            cfg.setdefault("mcp_servers", {})["hexbrain"] = server_cfg
+            save_config(cfg)
+            ensure_local_hexbrain(server_cfg, emit=(emit if not is_json else None))
+            try:
+                from hellhound.core.mcp_bridge import MCPBridge
+                bridge = MCPBridge("hexbrain", server_cfg)
+                ok = bridge.start(timeout=20.0)
+                tool_names = [t.name for t in bridge.tools] if ok else []
+                err = bridge.error
+                bridge.stop()
+            except ImportError:
+                ok, tool_names, err = False, [], "The 'mcp' Python package is not installed (pip install mcp)."
+            if not is_json:
+                if ok:
+                    emit.success(f"HexBrain (local) connected — {len(tool_names)} tool(s), unlimited, no key.")
+                    emit.info(f"Serving the full corpus from {path} on :{port}. Beast uses it as "
+                              f"mcp_hexbrain_*; the rate-limited hosted service is no longer needed.")
+                else:
+                    emit.warn(f"Saved, but the local test failed: {err or 'unknown'}. See /tmp/hexbrain-local.log.")
+            return {"status": "success" if ok else "saved_untested", "mode": "local",
+                    "path": path, "port": port, "tools": tool_names}
 
         api_key = sub[0].strip() if sub else ""
         if not api_key and not is_json and _stdin_interactive():
