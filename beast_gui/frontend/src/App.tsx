@@ -107,6 +107,29 @@ function renderMd(text: string): { __html: string } {
   catch { return { __html: text }; }
 }
 
+// The registrable ("apex") domain of a host, so subdomains of one site group
+// together like a sitemap: content-service.bugbountymasterclass.com and
+// bugbountymasterclass.com both resolve to "bugbountymasterclass.com". IPs and
+// localhost are left as-is. A small set of two-part public suffixes is handled.
+const _TWO_PART_TLDS = new Set([
+  "co.uk", "org.uk", "gov.uk", "ac.uk", "co.jp", "co.in", "com.br", "com.au",
+  "net.au", "com.mx", "co.za", "com.sg", "co.kr", "com.tr",
+]);
+function apexDomain(host: string): string {
+  const h = (host || "").trim().toLowerCase().replace(/:\d+$/, "");
+  if (!h || h === "localhost" || /^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return h;
+  const parts = h.split(".");
+  if (parts.length <= 2) return h;
+  const last2 = parts.slice(-2).join(".");
+  return _TWO_PART_TLDS.has(last2) ? parts.slice(-3).join(".") : last2;
+}
+// The label shown for a host inside its apex group — just the subdomain part
+// (api.google.com under google.com reads as "api"), or the full host if bare.
+function subLabel(host: string, apex: string): string {
+  const h = host.replace(/:\d+$/, "");
+  return h === apex ? h : (h.endsWith("." + apex) ? h.slice(0, -(apex.length + 1)) : h);
+}
+
 /** Normalize raw saved entries from JSON into strongly-typed Entry objects */
 function normalizeEntry(item: any): Entry {
   if (!item || typeof item !== "object") {
@@ -387,43 +410,75 @@ export default function App() {
             </nav>
             <div className="rail-section-title">TARGETS</div>
             <div className="target-list">
-              {programs.map((p) => {
-                const myTargets = p.targets.filter((t) => targets.includes(t));
-                if (myTargets.length === 0) return null;
-                const collapsed = collapsedPrograms.has(p.name);
-                return (
-                  <div key={p.name} className="program-group">
-                    <div className={`program-row ${scope.kind === "program" && scope.name === p.name ? "active" : ""}`}>
-                      <button className="program-arrow" onClick={() => toggleProgram(p.name)}>
-                        {collapsed ? "▸" : "▾"}
-                      </button>
-                      <button className="program-name" onClick={() => selectProgram(p)} title={`View the whole ${p.display_name} program`}>
-                        {p.display_name}
-                      </button>
+              {(() => {
+                // A program's apex domains → the program, so a loose subdomain
+                // of the same site (content-service.bugbountymasterclass.com)
+                // joins its program instead of floating as a separate target.
+                const progOf = new Map<string, string>();
+                for (const p of programs) for (const t of p.targets) if (targets.includes(t)) progOf.set(apexDomain(t), p.name);
+
+                const inProgram = new Set(programs.flatMap((p) => p.targets.filter((t) => targets.includes(t))));
+                const attached = new Map<string, string[]>(); // program.name → loose subs that belong to it
+                const trulyLoose: string[] = [];
+                for (const t of targets) {
+                  if (inProgram.has(t)) continue;
+                  const pn = progOf.get(apexDomain(t));
+                  if (pn) { const a = attached.get(pn) || []; a.push(t); attached.set(pn, a); }
+                  else trulyLoose.push(t);
+                }
+                const byHost = (a: string, b: string) => a.length - b.length || a.localeCompare(b);
+
+                // Programs — their own hosts plus any loose subdomains of the same site.
+                const progEls = programs.map((p) => {
+                  const mine = [...new Set([...p.targets.filter((t) => targets.includes(t)), ...(attached.get(p.name) || [])])].sort(byHost);
+                  if (mine.length === 0) return null;
+                  const collapsed = collapsedPrograms.has(p.name);
+                  return (
+                    <div key={p.name} className="program-group">
+                      <div className={`program-row ${scope.kind === "program" && scope.name === p.name ? "active" : ""}`}>
+                        <button className="program-arrow" onClick={() => toggleProgram(p.name)}>{collapsed ? "▸" : "▾"}</button>
+                        <button className="program-name" onClick={() => selectProgram(p)} title={`View the whole ${p.display_name} program`}>{p.display_name}</button>
+                      </div>
+                      {!collapsed && mine.map((t) => (
+                        <button key={t} className={`target nested ${t === activeTarget ? "active" : ""}`} onClick={() => switchTarget(t)} title={t}>
+                          <span className="target-dot" /><span className="target-name">{t}</span>
+                        </button>
+                      ))}
                     </div>
-                    {!collapsed && myTargets.map((t) => (
-                      <button
-                        key={t}
-                        className={`target nested ${t === activeTarget ? "active" : ""}`}
-                        onClick={() => switchTarget(t)}
-                      >
-                        <span className="target-dot" />
-                        <span className="target-name">{t}</span>
+                  );
+                });
+
+                // Truly-loose targets grouped by apex domain → a sitemap tree per site.
+                const byApex = new Map<string, string[]>();
+                for (const t of trulyLoose) { const a = apexDomain(t); const arr = byApex.get(a); if (arr) arr.push(t); else byApex.set(a, [t]); }
+                const looseEls = [...byApex.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([apex, subs]) => {
+                  if (subs.length === 1) {
+                    const t = subs[0];
+                    return (
+                      <button key={t} className={`target ${t === activeTarget ? "active" : ""}`} onClick={() => switchTarget(t)}>
+                        <span className="target-dot" /><span className="target-name">{t}</span>
                       </button>
-                    ))}
-                  </div>
-                );
-              })}
-              {targets.filter((t) => !programs.some((p) => p.targets.includes(t))).map((t) => (
-                <button
-                  key={t}
-                  className={`target ${t === activeTarget ? "active" : ""}`}
-                  onClick={() => switchTarget(t)}
-                >
-                  <span className="target-dot" />
-                  <span className="target-name">{t}</span>
-                </button>
-              ))}
+                    );
+                  }
+                  const key = `apex:${apex}`;
+                  const collapsed = collapsedPrograms.has(key);
+                  return (
+                    <div key={key} className="program-group">
+                      <div className="program-row">
+                        <button className="program-arrow" onClick={() => toggleProgram(key)}>{collapsed ? "▸" : "▾"}</button>
+                        <span className="program-name" title={`${subs.length} hosts under ${apex}`}>{apex}</span>
+                      </div>
+                      {!collapsed && [...subs].sort(byHost).map((t) => (
+                        <button key={t} className={`target nested ${t === activeTarget ? "active" : ""}`} onClick={() => switchTarget(t)} title={t}>
+                          <span className="target-dot" /><span className="target-name">{subLabel(t, apex)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                });
+
+                return [...progEls, ...looseEls];
+              })()}
               {targets.length === 0 && <div className="empty">no targets yet</div>}
             </div>
             <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
