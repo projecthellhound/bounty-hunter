@@ -1566,7 +1566,11 @@ def call_nvidia(prompt: str, api_key: str, model: str = "meta/llama-3.1-70b-inst
                         if result is not None:
                             return (result, usage_tokens) if return_usage else result
                     content = msg.get("content", "") or content
-            # No tool call — return text content
+            # No tool call — return text content, falling back to the model's
+            # reasoning_content if it left `content` empty (same reasoning-model
+            # quirk the streaming path handles above).
+            if not (content or "").strip():
+                content = msg.get("reasoning_content", "") or content
             text = strip_thinking_tags(content) or None
             return (text, usage_tokens) if return_usage else text
 
@@ -1579,6 +1583,7 @@ def call_nvidia(prompt: str, api_key: str, model: str = "meta/llama-3.1-70b-inst
             return (err, None) if return_usage else err
 
         full_response = []
+        reasoning_response = []  # fallback when a reasoning model leaves content empty
         token_count = 0
         usage_tokens = None
         repeat_guard = _RepetitionGuard()
@@ -1625,9 +1630,12 @@ def call_nvidia(prompt: str, api_key: str, model: str = "meta/llama-3.1-70b-inst
                             )
                             continue
                         token = delta.get("content", "")
-                        # Note: delta.get("reasoning_content") contains internal reasoning/CoT
-                        # (e.g. from nemotron or deepseek-r1). We never stream or return reasoning
-                        # tokens to preserve clean user-facing chat.
+                        # delta.get("reasoning_content") is the model's internal
+                        # CoT (nemotron, deepseek-r1). We don't stream it to keep
+                        # the chat clean — but we DO keep a copy, because some
+                        # reasoning models spend their whole budget here and
+                        # leave `content` empty; without a fallback the beast
+                        # returns nothing and the chat looks like it died.
                         if token:
                             full_response.append(token)
                             token_count += 1
@@ -1635,6 +1643,10 @@ def call_nvidia(prompt: str, api_key: str, model: str = "meta/llama-3.1-70b-inst
                                 stream_filter.feed(token)
                             if repeat_guard.feed(token):
                                 break
+                        else:
+                            rtok = delta.get("reasoning_content", "")
+                            if rtok:
+                                reasoning_response.append(rtok)
                 except json.JSONDecodeError:
                     continue
 
@@ -1642,6 +1654,11 @@ def call_nvidia(prompt: str, api_key: str, model: str = "meta/llama-3.1-70b-inst
             stream_filter.flush()
 
         result = "".join(full_response).strip()
+        if not result and reasoning_response:
+            # The model answered entirely inside reasoning_content (and never
+            # emitted a real content token) — use that rather than hand the user
+            # an empty reply. strip_thinking_tags below trims any <think> markup.
+            result = "".join(reasoning_response).strip()
         cleaned = strip_thinking_tags(result)
         text = cleaned if cleaned else None
         if return_usage:
