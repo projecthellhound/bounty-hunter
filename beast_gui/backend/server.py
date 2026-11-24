@@ -714,6 +714,46 @@ async def ws_endpoint(ws: WebSocket):
         pump_task.cancel()
 
 
+def _ensure_brain_running():
+    """Ensure BeastBrain visualization service is running on port 3220."""
+    import socket
+    import subprocess
+    import shutil
+    try:
+        with socket.socket() as s:
+            s.settimeout(0.3)
+            if s.connect_ex(("127.0.0.1", 3220)) == 0:
+                return
+    except Exception:
+        pass
+
+    brain_dir = _REPO_ROOT.parent / "beast-brain"
+    if not brain_dir.is_dir():
+        brain_dir = Path("/home/joe/Project-Hellhound/beast-brain")
+    if not brain_dir.is_dir():
+        return
+
+    pnpm_bin = shutil.which("pnpm") or "/home/joe/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback/pnpm"
+    if os.path.exists(pnpm_bin):
+        env = os.environ.copy()
+        fallback_path = "/home/joe/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback"
+        if fallback_path not in env.get("PATH", ""):
+            env["PATH"] = f"{fallback_path}:{env.get('PATH', '')}"
+        subprocess.Popen(
+            [pnpm_bin, "dev", "--port", "3220"],
+            cwd=str(brain_dir),
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+
+@app.get("/api/brain/url")
+def get_brain_url():
+    _ensure_brain_running()
+    return {"url": "http://localhost:3220"}
+
+
 # ── serve the built frontend from this same process ───────────────────────
 _FRONTEND_DIST = _REPO_ROOT / "beast_gui" / "frontend" / "dist"
 if _FRONTEND_DIST.is_dir():

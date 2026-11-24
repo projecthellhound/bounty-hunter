@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { marked } from "marked";
 import logo from "./logo.png";
-import KnowledgeGraph from "./graph/KnowledgeGraph";
+import Brain from "./graph/Brain";
 import "./App.css";
 
 const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
@@ -385,7 +385,7 @@ export default function App() {
               <div className={`nav-item ${navView === "chat" ? "active" : ""}`} onClick={() => setNavView("chat")}>Findings</div>
               <div className="nav-item">Automations</div>
               <div className="nav-item">Skills</div>
-              <div className={`nav-item ${navView === "graph" ? "active" : ""}`} onClick={() => setNavView("graph")}>Knowledge Graph</div>
+              <div className={`nav-item ${navView === "graph" ? "active" : ""}`} onClick={() => setNavView("graph")}>Brain</div>
             </nav>
             <div className="rail-section-title">TARGETS</div>
             <div className="target-list">
@@ -476,10 +476,10 @@ export default function App() {
         </header>
 
         {navView === "graph" ? (
-          <KnowledgeGraph
+          <Brain
             activeTarget={hasTarget ? activeTarget : undefined}
             apiBase={API}
-            onViewReport={(title, file, target) => setReport({ title, file, target })}
+            onViewReport={(title: string, file: string, target?: string) => setReport({ title, file, target: target || activeTarget || "" })}
           />
         ) : (
         <>
