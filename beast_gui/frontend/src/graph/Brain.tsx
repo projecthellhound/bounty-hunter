@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import "./KnowledgeGraph.css";
 
 interface Props {
@@ -9,7 +9,12 @@ interface Props {
 
 export default function Brain({ activeTarget }: Props) {
   const [online, setOnline] = useState<boolean | null>(null);
-  const [attempts, setAttempts] = useState(0);
+  const [slow, setSlow] = useState(false);
+  // Refs so the single polling interval can read the latest state without
+  // being torn down and recreated on every tick (which is what used to turn
+  // the 1200ms poll into a tight back-to-back request storm during cold start).
+  const onlineRef = useRef<boolean | null>(null);
+  const attemptsRef = useRef(0);
 
   const brainUrl = activeTarget
     ? `http://localhost:3220/?view=programs&program=${encodeURIComponent(activeTarget)}`
@@ -19,46 +24,50 @@ export default function Brain({ activeTarget }: Props) {
     let active = true;
 
     const checkStatus = async () => {
+      let up = false;
       try {
         const res = await fetch("/api/brain/status");
-        if (res.ok) {
-          const data = await res.json();
-          if (active) {
-            setOnline(data.online);
-            if (!data.online) setAttempts((c) => c + 1);
-            return;
-          }
-        }
+        // A non-OK response is a real "not ready" signal, not a dead state —
+        // treat it as offline and keep polling instead of silently stalling.
+        up = res.ok ? !!(await res.json()).online : false;
       } catch {
-        // Fallback probe direct
-        fetch("http://localhost:3220/", { mode: "no-cors" })
-          .then(() => { if (active) setOnline(true); })
-          .catch(() => {
-            if (active) {
-              setOnline(false);
-              setAttempts((c) => c + 1);
-            }
-          });
+        // Backend itself unreachable — probe the brain port directly.
+        try {
+          await fetch("http://localhost:3220/", { mode: "no-cors" });
+          up = true;
+        } catch {
+          up = false;
+        }
+      }
+      if (!active) return;
+      onlineRef.current = up;
+      setOnline(up);
+      if (up) {
+        attemptsRef.current = 0;
+        setSlow(false);
+      } else if (++attemptsRef.current > 10) {
+        setSlow(true);
       }
     };
 
     checkStatus();
-
+    // One stable interval for the lifetime of the component. It keeps polling
+    // on a steady 1200ms cadence while offline and goes quiet once online.
     const interval = setInterval(() => {
-      if (online !== true) {
-        checkStatus();
-      }
+      if (onlineRef.current !== true) checkStatus();
     }, 1200);
 
     return () => {
       active = false;
       clearInterval(interval);
     };
-  }, [online, attempts]);
+  }, []);
 
   const handleRestart = async () => {
+    attemptsRef.current = 0;
+    onlineRef.current = null;
+    setSlow(false);
     setOnline(null);
-    setAttempts(0);
     try {
       await fetch("/api/brain/start", { method: "POST" });
     } catch {
@@ -68,7 +77,7 @@ export default function Brain({ activeTarget }: Props) {
 
   return (
     <div className="brain-container" style={{ width: "100%", height: "100%", position: "relative", background: "#13120e", display: "flex", flexDirection: "column" }}>
-      {online === false && attempts > 10 && (
+      {online === false && slow && (
         <div style={{ padding: "12px 20px", background: "#1f1d17", borderBottom: "1px solid #322f25", color: "#efe6d0", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.85rem", zIndex: 20 }}>
           <span>
             <strong style={{ color: "#ff6a3d" }}>Brain service taking longer to respond:</strong> Log at <code>/tmp/beast-brain.log</code>.

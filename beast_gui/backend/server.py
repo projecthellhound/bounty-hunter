@@ -757,6 +757,28 @@ def _ensure_brain_running() -> bool:
         return False
 
 
+def _dump_tools_feed() -> None:
+    """Snapshot the real agent tool registry to ~/.beast/tools.json so the
+    BeastBrain visualization (a separate Next app that reads from the
+    filesystem, like it reads skills and lessons) can render the actual tools
+    the beast can call — not a hand-maintained list. Written on GUI launch,
+    right before the brain is (auto-)started."""
+    try:
+        from hellhound.core.agent import TOOL_REGISTRY
+    except Exception:
+        return
+    try:
+        tools = [
+            {"name": name, "description": str(getattr(spec, "description", "") or "")[:400]}
+            for name, spec in sorted(TOOL_REGISTRY.items())
+        ]
+        out = Path(os.path.expanduser("~/.beast")) / "tools.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(tools, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _stop_brain():
     global _brain_proc
     if _brain_proc and _brain_proc.poll() is None:
@@ -832,6 +854,7 @@ def _wait_until_up(port: int, timeout: float = 15.0) -> bool:
 def main():
     """Headless/web mode: just serve. A browser (or the --web CLI path) points at it."""
     import uvicorn
+    _dump_tools_feed()
     _ensure_brain_running()
     uvicorn.run(app, host="127.0.0.1", port=_resolve_port(), log_level="warning")
 
@@ -844,6 +867,7 @@ def run_desktop(title: str = "BEAST") -> bool:
     backend requires it). Returns False if no native webview backend is
     available, so the caller can fall back to opening a browser.
     """
+    _dump_tools_feed()
     _ensure_brain_running()
     try:
         import webview

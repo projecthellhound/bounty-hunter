@@ -383,8 +383,6 @@ export default function App() {
           <>
             <nav className="nav">
               <div className={`nav-item ${navView === "chat" ? "active" : ""}`} onClick={() => setNavView("chat")}>Findings</div>
-              <div className="nav-item">Automations</div>
-              <div className="nav-item">Skills</div>
               <div className={`nav-item ${navView === "graph" ? "active" : ""}`} onClick={() => setNavView("graph")}>Brain</div>
             </nav>
             <div className="rail-section-title">TARGETS</div>
