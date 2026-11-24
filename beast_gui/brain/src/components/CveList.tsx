@@ -25,12 +25,12 @@ export default function CveList({ year, month, band }: { year: number; month: nu
   const ready = list?.key === key;
   return (
     <>
-      <input className={s.filter} value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="Filter by product, name or id, for example: wordpress" aria-label="Filter these CVEs" maxLength={80} spellCheck={false} />
+      <input className={s.filter} value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="Filter by technique or id, for example: sqli" aria-label="Filter these lessons" maxLength={80} spellCheck={false} />
       {!ready ? <p className={s.note}>Loading…</p> : (<>
         {q && <p className={s.note}>{num(list.total)} match</p>}
         {list.rows.map((r) => (
-          <a key={r[0]} className={s.report} href={`/cve/${r[0]}`} target="_blank" rel="noreferrer">
-            <span>{r[1] || r[0]}</span><small>{r[1] ? `${r[0]}  ·  ` : ""}{r[4]}% likely to be exploited</small>
+          <a key={r[0]} className={s.report} href={`/report/${r[0]}`} rel="noreferrer">
+            <span>{r[1] || r[0]}</span><small>{r[1] ? `${r[0]}  ·  ` : ""}{r[4]}% confidence</small>
           </a>
         ))}
         {list.rows.length === 0 && <p className={s.note}>Nothing matches.</p>}

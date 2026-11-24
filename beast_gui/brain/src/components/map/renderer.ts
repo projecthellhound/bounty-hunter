@@ -513,7 +513,7 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
           [top.slice(0, half), top.slice(half)].forEach((col, si) => {
             col.sort((a, b) => a.y - b.y);
             const y0 = dcy - ((col.length - 1) * ROW) / 2;
-            col.forEach(({ l, x, y }, i) => labs.push({ n: l, ax: x, ay: y, id: host ? "" : isCve ? (l.d[1] ? `${l.d[0]}  ${l.d[4]}% likely` : `${l.d[4]}% likely`) : [`#${l.d[0]}`, isProg ? "" : l.d[5], money(l.d[3])].filter(Boolean).join("  "), name: clip(host ? String(l.d[0]) : l.d[1] || (isCve ? String(l.d[0]) : "No details stored"), 42), al: 1,
+            col.forEach(({ l, x, y }, i) => labs.push({ n: l, ax: x, ay: y, id: host ? "" : isCve ? (l.d[1] ? `${l.d[0]}  ${l.d[4]}% confidence` : `${l.d[4]}% confidence`) : [`#${l.d[0]}`, isProg ? "" : l.d[5], money(l.d[3])].filter(Boolean).join("  "), name: clip(host ? String(l.d[0]) : l.d[1] || (isCve ? String(l.d[0]) : "No details stored"), 42), al: 1,
               hot: hover === l || f.leaf === l, px: 11, pr: 1e8 - i, dir: 0, reach: 0, fix: { x: si ? dcx + R + 44 : dcx - R - 44, y: y0 + i * ROW, side: si ? "left" : "right" } }));
           });
         }
@@ -610,7 +610,7 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
       g.fillStyle = `rgb(${RED})`; circle(x, y, Math.max(4, r + 2.5)); g.fill();
       g.strokeStyle = `rgba(${RED},0.9)`; circle(x, y, Math.max(4, r + 2.5) + 3.5); g.stroke();
       const [ox, oy] = S(0, 0);
-      labs.push({ n: lit, ax: x, ay: y, id: `${lit.id}   ${lit.likely}% likely${lit.check ? "   ready check" : ""}`, name: clip(lit.name || lit.id, 48),
+      labs.push({ n: lit, ax: x, ay: y, id: `${lit.id}   ${lit.likely}% confidence${lit.check ? "   validated" : ""}`, name: clip(lit.name || lit.id, 48),
         sub: "Validated. Click to open it.", subHot: true, al: 1, hot: true, px: 12.5, pr: 5e9, dir: Math.atan2(y - oy, x - ox) + Math.PI, reach: 14 });
     }
   };
