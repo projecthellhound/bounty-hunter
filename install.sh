@@ -194,6 +194,25 @@ if _pip_install_with_retry -e "$PROJECT_ROOT[gui]"; then
     else
         warn "No prebuilt GUI found and npm is missing. To build it: cd beast_gui/frontend && npm install && npm run build"
     fi
+
+    # The Brain tab is a Next app (beast_gui/brain) that runs locally on :3220.
+    # It needs its own node deps installed once; without them the Brain tab just
+    # shows an "offline" banner (the rest of the GUI is unaffected).
+    BRAIN_DIR="$PROJECT_ROOT/beast_gui/brain"
+    if [ -f "$BRAIN_DIR/package.json" ]; then
+        if [ -x "$BRAIN_DIR/node_modules/.bin/next" ]; then
+            success "Brain ready (knowledge graph in 'beast --gui' → Brain tab)"
+        elif command -v npm &>/dev/null; then
+            info "Installing Brain dependencies (one-time, ~a minute)…"
+            if (cd "$BRAIN_DIR" && npm install --silent 2>/dev/null); then
+                success "Brain ready (knowledge graph in 'beast --gui' → Brain tab)"
+            else
+                warn "Brain deps didn't install — the GUI works, but its Brain tab stays offline until: cd beast_gui/brain && npm install"
+            fi
+        else
+            warn "Node/npm missing — the GUI works, but its Brain tab needs: cd beast_gui/brain && npm install"
+        fi
+    fi
 else
     warn "GUI deps could not be installed — 'beast' (TUI) and 'beast --classic' still work."
 fi
@@ -307,6 +326,56 @@ else
         fi
     fi
 fi
+
+# ── 4c. Recon Arsenal (ProjectDiscovery suite + fuzzers) ──
+# The agent drives external recon binaries — subfinder, httpx, naabu, nuclei,
+# dnsx, katana, ffuf, gau. It degrades gracefully when one is missing, but a
+# fresh machine should have the core set. All best-effort; never fatal.
+info "Installing the recon arsenal (subfinder, httpx, naabu, nuclei, dnsx, katana, ffuf)…"
+
+# Go drives both pdtm (the ProjectDiscovery tool manager) and the fuzzers.
+if ! command -v go &>/dev/null; then
+    if [ -f /etc/debian_version ] && command -v apt-get &>/dev/null && command -v sudo &>/dev/null \
+       && ! { pgrep -x apt >/dev/null 2>&1 || pgrep -x apt-get >/dev/null 2>&1 || pgrep -x dpkg >/dev/null 2>&1; }; then
+        sudo apt-get install -y -q golang-go &>/dev/null || true
+    fi
+fi
+
+if command -v go &>/dev/null; then
+    GO_BIN="$(go env GOPATH 2>/dev/null)/bin"
+    # pdtm installs/updates the whole ProjectDiscovery suite in one shot.
+    if ! command -v pdtm &>/dev/null && [ ! -x "$GO_BIN/pdtm" ]; then
+        go install -v github.com/projectdiscovery/pdtm/cmd/pdtm@latest &>/dev/null || true
+    fi
+    PDTM="$(command -v pdtm 2>/dev/null || echo "$GO_BIN/pdtm")"
+    if [ -x "$PDTM" ]; then
+        "$PDTM" -ia -nc &>/dev/null || warn "pdtm couldn't install every tool — re-run later: pdtm -ia"
+    fi
+    # Fuzzer + URL miner that aren't part of pdtm.
+    go install github.com/ffuf/ffuf/v2@latest &>/dev/null || true
+    go install github.com/lc/gau/v2/cmd/gau@latest &>/dev/null || true
+    # Keep nuclei's templates current (first run also self-updates).
+    if command -v nuclei &>/dev/null || [ -x "$HOME/.pdtm/go/bin/nuclei" ]; then
+        ("$(command -v nuclei 2>/dev/null || echo "$HOME/.pdtm/go/bin/nuclei")" -update-templates -silent &>/dev/null || true) &
+    fi
+    success "Recon arsenal installed (ProjectDiscovery suite + ffuf, gau)"
+else
+    warn "Go not found — skipping the recon arsenal. Install Go, then: go install github.com/projectdiscovery/pdtm/cmd/pdtm@latest && pdtm -ia"
+fi
+
+# feroxbuster / amass / massdns ship in the Debian/Kali repos.
+if [ -f /etc/debian_version ] && command -v apt-get &>/dev/null && command -v sudo &>/dev/null \
+   && ! { pgrep -x apt >/dev/null 2>&1 || pgrep -x apt-get >/dev/null 2>&1 || pgrep -x dpkg >/dev/null 2>&1; }; then
+    sudo apt-get install -y -q feroxbuster amass massdns &>/dev/null || true
+fi
+
+# Make the go-installed tools reachable from new shells.
+for _bindir in "$(command -v go &>/dev/null && echo "$(go env GOPATH 2>/dev/null)/bin")" "$HOME/.pdtm/go/bin" "$HOME/go/bin" "$HOME/.local/bin"; do
+    [ -n "$_bindir" ] || continue
+    if ! grep -qF "$_bindir" "$SHELL_RC" 2>/dev/null; then
+        echo "export PATH=\"$_bindir:\$PATH\"" >> "$SHELL_RC"
+    fi
+done
 
 # ── 5. System Integration ──────────────────────────────
 start_animation "FINALIZING INTEGRATION"
