@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Beast Knowledge Graph — Brain & Target Findings</title>
+  <link rel="stylesheet" href="/static/brain.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+  <div class="kg-root">
+    <!-- Corner crosshairs matching HexBrain HUD design -->
+    <span class="corner tl">+</span>
+    <span class="corner tr">+</span>
+    <span class="corner bl">+</span>
+    <span class="corner br">+</span>
+
+    <!-- Top Navigation Header -->
+    <header class="kg-header">
+      <div class="brand">
+        <svg width="22" height="22" viewBox="0 0 64 64" fill="none">
+          <circle cx="32" cy="32" r="30" stroke="#e5484d" stroke-width="2.5" stroke-dasharray="6 4"/>
+          <path d="M32 12 L32 52 M12 32 L52 32" stroke="#e5484d" stroke-width="2"/>
+          <circle cx="32" cy="32" r="12" fill="#13120e" stroke="#ff6a3d" stroke-width="2"/>
+          <circle cx="32" cy="32" r="4" fill="#ff6a3d"/>
+        </svg>
+        <span class="brand-text">BEAST <span>KNOWLEDGE GRAPH</span></span>
+      </div>
+
+      <!-- Lenses: Beast Brain vs Target Findings -->
+      <nav class="lenses" role="group">
+        <button id="lens-brain" class="lens-btn active" data-lens="brain">
+          <span class="dot"></span> Beast Brain (Skills &amp; Methodology)
+        </button>
+        <button id="lens-target" class="lens-btn" data-lens="target">
+          <span class="dot"></span> Target Findings &amp; Attack Surface
+        </button>
+      </nav>
+
+      <!-- Right controls: Target switcher + Search -->
+      <div class="header-actions">
+        <div id="target-select-wrap" class="target-select-wrap" style="display: none;">
+          <label for="target-select">TARGET:</label>
+          <select id="target-select" class="target-select">
+            <option value="">Loading targets...</option>
+          </select>
+        </div>
+        <button id="find-btn" class="find-btn">
+          <span>Find</span> <kbd>F</kbd>
+        </button>
+      </div>
+    </header>
+
+    <!-- Canvas & SVG Layer for 60FPS Radial Dial -->
+    <div class="canvas-viewport" id="viewport">
+      <canvas id="graph-canvas"></canvas>
+      <svg id="graph-svg"></svg>
+    </div>
+
+    <!-- Bottom HUD Stats Bar -->
+    <footer class="kg-footer">
+      <div class="footer-left">
+        <h1 id="footer-title">Beast Knowledge Engine: Offensive Skills &amp; Methodology</h1>
+        <p id="footer-desc">
+          Interactive map of 30 offensive hunting skills, techniques, and chained attack vectors.
+          Click any skill to inspect methodology and live execution tools.
+        </p>
+      </div>
+      <div class="footer-stats" id="footer-stats">
+        <!-- Dynamically populated -->
+      </div>
+    </footer>
+
+    <!-- Slide-out Inspection Drawer -->
+    <aside class="detail-drawer" id="drawer" aria-hidden="true">
+      <div class="drawer-header">
+        <div class="drawer-badge" id="drawer-badge">SKILL</div>
+        <button class="drawer-close" id="drawer-close" title="Close [Esc]">✕</button>
+      </div>
+      <div class="drawer-title" id="drawer-title"></div>
+      <div class="drawer-meta" id="drawer-meta"></div>
+      <div class="drawer-body" id="drawer-body"></div>
+    </aside>
+
+    <!-- Search Modal -->
+    <div class="search-modal" id="search-modal" style="display: none;">
+      <div class="search-box">
+        <div class="search-input-wrap">
+          <input type="text" id="search-input" placeholder="Search skills, techniques, findings, hosts..." autofocus autocomplete="off">
+          <button id="search-close">ESC</button>
+        </div>
+        <div class="search-results" id="search-results"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/brain.js"></script>
+</body>
+</html>

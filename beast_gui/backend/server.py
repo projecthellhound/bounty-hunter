@@ -35,7 +35,7 @@ os.environ.setdefault("BEAST_TUI", "1")
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from beast_gui.backend.gui_emit import GuiEmit
@@ -363,17 +363,51 @@ def _reports_dir(target_name: str) -> Path:
 
 @app.get("/api/report")
 def get_report(target: str, file: str):
-    """Serve a Beast-generated HTML finding report so the GUI can render it inline.
-    Path-traversal-guarded: only a basename inside the target's own reports dir."""
+    """Serve a Beast-generated finding report so the GUI can render it inline.
+    Reports are Markdown now (the GUI renders them with its own markdown
+    engine); a few legacy .html artifacts (e.g. CORS PoCs) are still served as
+    HTML for the iframe fallback. Path-traversal-guarded: only a basename
+    inside the target's own reports dir."""
     safe = os.path.basename(file)
     rpt = _reports_dir(target) / safe
     try:
         rpt = rpt.resolve()
         if rpt.parent != _reports_dir(target).resolve() or not rpt.is_file():
             return JSONResponse({"error": "not_found"}, status_code=404)
-        return HTMLResponse(rpt.read_text(encoding="utf-8", errors="ignore"))
+        text = rpt.read_text(encoding="utf-8", errors="ignore")
+        if rpt.suffix.lower() == ".md":
+            return Response(text, media_type="text/markdown; charset=utf-8")
+        return HTMLResponse(text)
     except Exception:
         return JSONResponse({"error": "not_found"}, status_code=404)
+
+
+_IMG_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+              ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp"}
+
+
+@app.get("/api/report-asset")
+def get_report_asset(target: str, file: str):
+    """Serve an image referenced by a Markdown report (e.g. a screenshot), so
+    `![](shot.png)` renders inside the GUI. Contained to the target's own
+    reports/ and screenshots/ dirs — a report can never pull a file from
+    outside the engagement's own storage."""
+    from hellhound.core.tasks import get_target_path, sanitize_target_name
+    rel = os.path.normpath(file).lstrip("/")
+    if rel.startswith(".."):
+        return JSONResponse({"error": "bad_path"}, status_code=400)
+    ext = os.path.splitext(rel)[1].lower()
+    if ext not in _IMG_TYPES:
+        return JSONResponse({"error": "unsupported"}, status_code=400)
+    base = Path(get_target_path(sanitize_target_name(target))).parent.resolve()
+    for sub in ("reports", "screenshots", ""):
+        cand = (base / sub / rel).resolve() if sub else (base / rel).resolve()
+        try:
+            if str(cand).startswith(str(base)) and cand.is_file():
+                return Response(cand.read_bytes(), media_type=_IMG_TYPES[ext])
+        except Exception:
+            continue
+    return JSONResponse({"error": "not_found"}, status_code=404)
 
 
 _KIND_ACRONYMS = {"idor", "xss", "ssrf", "sqli", "sql", "xxe", "csrf", "jwt", "api", "rce", "ssti", "lfi", "rfi"}
@@ -433,8 +467,8 @@ def _graph_for_targets(center_label: str, target_names: list) -> dict:
         # A long recon pass can harvest hundreds of artifacts (tokens, URLs,
         # parameters) per target — real data, but drawing each one as its own
         # node would bury the one or two actual findings under a sunflower
-        # of noise. Same principle HexBrain itself uses for an oversized
-        # strip: past a point, show the count, not every dot (see ARTIFACT_CAP).
+        # of noise. So past a point, show the count, not every dot (see
+        # ARTIFACT_CAP).
         ARTIFACT_CAP = 20
         arts = (getattr(tgt, "state", {}) or {}).get("artifacts") or []
         arts = [a for a in arts if isinstance(a, dict)]
@@ -728,14 +762,13 @@ def _is_brain_listening(port: int = 3220) -> bool:
 
 
 def _ensure_brain_running() -> bool:
-    """Ensure BeastBrain visualization service is running on port 3220."""
+    """Ensure the Brain visualization service is running on port 3220."""
     global _brain_proc
     if _is_brain_listening(3220):
         return True
 
-    brain_dir = _REPO_ROOT.parent / "beast-brain"
-    if not brain_dir.is_dir():
-        brain_dir = Path("/home/joe/Project-Hellhound/beast-brain")
+    # The brain visualization lives inside this repo (one project, one clone).
+    brain_dir = _REPO_ROOT / "beast_gui" / "brain"
     if not brain_dir.is_dir():
         return False
 
@@ -759,7 +792,7 @@ def _ensure_brain_running() -> bool:
 
 def _dump_tools_feed() -> None:
     """Snapshot the real agent tool registry to ~/.beast/tools.json so the
-    BeastBrain visualization (a separate Next app that reads from the
+    Brain visualization (a separate Next app that reads from the
     filesystem, like it reads skills and lessons) can render the actual tools
     the beast can call — not a hand-maintained list. Written on GUI launch,
     right before the brain is (auto-)started."""

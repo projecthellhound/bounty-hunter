@@ -1142,6 +1142,26 @@
   background: #fff;
 }
 
+/* Markdown reports render inline (no iframe), so they inherit the app theme. */
+.report-md {
+  background: var(--panel, #13120e);
+  color: var(--text, #e6e8eb);
+  overflow: auto;
+  padding: 24px 30px 40px;
+  line-height: 1.6;
+  font-size: 14px;
+}
+.report-md h1 { font-size: 1.5em; border-bottom: 1px solid var(--border, #322f25); padding-bottom: 10px; }
+.report-md h2 { font-size: 1.2em; margin-top: 1.4em; }
+.report-md h3 { font-size: 1.02em; color: var(--muted, #c6bba5); text-transform: uppercase; letter-spacing: .04em; }
+.report-md code { background: rgba(255,255,255,.06); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
+.report-md pre { background: #0a0c10; border: 1px solid var(--border, #262b36); border-radius: 6px; padding: 12px 14px; overflow-x: auto; }
+.report-md pre code { background: none; padding: 0; }
+.report-md img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border, #262b36); }
+.report-md a { color: #ff8a5c; }
+.report-md table { border-collapse: collapse; }
+.report-md th, .report-md td { border: 1px solid var(--border, #322f25); padding: 6px 10px; }
+
 .settings-hint {
   color: var(--muted);
   font-size: 12px;

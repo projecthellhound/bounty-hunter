@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { marked } from "marked";
 import logo from "./logo.png";
 import Brain from "./graph/Brain";
@@ -639,7 +639,9 @@ export default function App() {
       {report && (
         <ReportModal
           title={report.title}
-          src={`${API}/api/report?target=${encodeURIComponent(report.target)}&file=${encodeURIComponent(report.file)}`}
+          target={report.target}
+          file={report.file}
+          api={API}
           onClose={() => setReport(null)}
         />
       )}
@@ -705,12 +707,39 @@ function ToolCardView({ card }: { card: ToolCard }) {
   );
 }
 
-function ReportModal({ title, src, onClose }: { title: string; src: string; onClose: () => void }) {
+function ReportModal({ title, target, file, api, onClose }: { title: string; target: string; file: string; api: string; onClose: () => void }) {
+  const url = `${api}/api/report?target=${encodeURIComponent(target)}&file=${encodeURIComponent(file)}`;
+  const isMd = file.toLowerCase().endsWith(".md");
+  const [md, setMd] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isMd) return;
+    let live = true;
+    fetch(url).then((r) => r.text()).then((t) => { if (live) setMd(t); }).catch(() => { if (live) setMd("*Failed to load report.*"); });
+    return () => { live = false; };
+  }, [url, isMd]);
+
+  // Render the Markdown, rewriting relative image paths to the asset endpoint
+  // so `![](shot.png)` in a report resolves from the target's own storage.
+  const html = useMemo(() => {
+    if (md == null) return "";
+    let out = marked.parse(md) as string;
+    out = out.replace(
+      /(<img[^>]+src=")(?!https?:|data:|\/)([^"]+)(")/g,
+      (_m, a, p, b) => `${a}${api}/api/report-asset?target=${encodeURIComponent(target)}&file=${encodeURIComponent(p)}${b}`
+    );
+    return out;
+  }, [md, api, target]);
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal report-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head"><span>{title}</span><button onClick={onClose}>✕</button></div>
-        <iframe className="report-frame" src={src} title={title} />
+        {isMd ? (
+          <div className="report-frame report-md" dangerouslySetInnerHTML={{ __html: html }} />
+        ) : (
+          <iframe className="report-frame" src={url} title={title} />
+        )}
       </div>
     </div>
   );

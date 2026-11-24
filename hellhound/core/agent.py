@@ -8414,90 +8414,13 @@ def _auto_save_finding_report(
         reports_dir = Path(os.path.expanduser(f"~/.beast/targets/{target_name}/reports"))
         reports_dir.mkdir(parents=True, exist_ok=True)
 
-        color = _SEVERITY_COLOR.get(severity, "#8a8f98")
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        note_html = (
-            f'<div class="section-label">Evidence / Notes</div><p>{_html_escape(note).replace(chr(10), "<br>")}</p>'
-            if note else ""
-        )
-        updated_html = (
-            f'<div class="section-label">Update</div><p>{_html_escape(updated_note).replace(chr(10), "<br>")}</p>'
-            if updated_note else ""
-        )
-        endpoint_html = f'<div class="meta">Endpoint: {_html_escape(request_ref)}</div>' if request_ref else ""
-        # Real, byte-for-byte captured request/response — separate from the
-        # narrative note above, and never model-authored: this is exactly
-        # what _execute_curl saw on the wire for this endpoint.
-        raw_evidence_html = ""
-        if raw_evidence:
-            blocks = "".join(_evidence_html_block(r) for r in raw_evidence)
-            raw_evidence_html = f'<div class="section-label">Proof — Captured Request/Response</div>{blocks}'
-
         md_text = _finding_markdown(title, kind, severity, request_ref, note, raw_evidence, updated_note)
-
-        html_doc = f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8">
-<title>{_html_escape(title)}</title>
-<style>
-  :root {{ color-scheme: dark; }}
-  body {{ background:#0d0f14; color:#e6e8eb; font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; line-height:1.55; }}
-  h1 {{ font-size: 1.6em; border-bottom: 2px solid {color}; padding-bottom: 12px; }}
-  .meta {{ color:#9aa0a8; font-size:.9em; margin-bottom: 10px; }}
-  .finding {{ background:#12151c; border:1px solid #262b36; border-radius:10px; padding:22px 24px; margin-top:20px; }}
-  .sev-badge {{ display:inline-block; color:#0d0f14; font-weight:700; font-size:.75em; padding:3px 10px; border-radius:999px; letter-spacing:.04em; background:{color}; margin-bottom:10px; }}
-  .section-label {{ text-transform:uppercase; letter-spacing:.06em; font-size:.72em; color:#7d8590; margin:14px 0 4px; font-weight:600; }}
-  .code-block {{ background:#0a0c10; border:1px solid #262b36; border-radius:6px; padding:12px 14px; overflow-x:auto; font-size:.82em; white-space:pre-wrap; word-break:break-all; margin-bottom:10px; }}
-  .code-block mark.leak {{ background:#5a1e1e; color:#ffd24d; font-weight:700; padding:0 3px; border-radius:3px; box-shadow:0 0 0 1px #ff6b6b inset; }}
-  .leak-legend {{ color:#ff9f6b; font-size:.75em; margin:-4px 0 12px 2px; }}
-  .kind {{ color:#7d8590; font-size:.85em; }}
-  .copy-btn {{ background:#1c2029; border:1px solid #333a47; color:#c7ccd3; font-size:.72em; padding:3px 10px; border-radius:6px; cursor:pointer; margin-left:8px; }}
-  .copy-btn:hover {{ background:#262b36; }}
-  .copy-btn.copied {{ background:#1f3d2a; border-color:#2f6b41; color:#8fe0a6; }}
-  footer {{ margin-top:40px; color:#5c6370; font-size:.8em; text-align:center; }}
-</style></head>
-<body>
-<h1>{_html_escape(title)} <button class="copy-btn" onclick="hhCopy('finding-src', this)">Copy as Markdown</button></h1>
-<template id="finding-src">{_html_escape(md_text)}</template>
-<div class="meta">Target: {_html_escape(target.host or target.name)} &nbsp;·&nbsp; Generated {generated_at}</div>
-<div class="finding">
-  <span class="sev-badge">{_html_escape(severity.upper())}</span>
-  <div class="kind">Category: {_html_escape(kind)}</div>
-  {endpoint_html}
-  {note_html}
-  {updated_html}
-  {raw_evidence_html}
-</div>
-<footer>Auto-saved by HELLHOUND the moment this finding was confirmed — run export_report at the end of the session for a single combined write-up of every finding.</footer>
-<script>
-function hhCopy(id, btn) {{
-  var el = document.getElementById(id);
-  if (!el) return;
-  var text = el.content ? el.content.textContent : el.textContent;
-  var done = function() {{
-    var orig = btn.textContent;
-    btn.textContent = 'Copied';
-    btn.classList.add('copied');
-    setTimeout(function() {{ btn.textContent = orig; btn.classList.remove('copied'); }}, 1400);
-  }};
-  if (navigator.clipboard && navigator.clipboard.writeText) {{
-    navigator.clipboard.writeText(text).then(done, function() {{
-      var ta = document.createElement('textarea');
-      ta.value = text; document.body.appendChild(ta); ta.select();
-      try {{ document.execCommand('copy'); done(); }} catch (e) {{}}
-      document.body.removeChild(ta);
-    }});
-  }} else {{
-    var ta = document.createElement('textarea');
-    ta.value = text; document.body.appendChild(ta); ta.select();
-    try {{ document.execCommand('copy'); done(); }} catch (e) {{}}
-    document.body.removeChild(ta);
-  }}
-}}
-</script>
-</body></html>"""
 
         if existing_path:
             out_path = Path(existing_path)
+            if out_path.suffix.lower() != ".md":
+                out_path = out_path.with_suffix(".md")  # an older finding stored a .html path
             out_path.parent.mkdir(parents=True, exist_ok=True)
         else:
             # CAUGHT IN THE WILD (VaultFi/localhost, 2-finding session):
@@ -8511,9 +8434,11 @@ function hhCopy(id, btn) {{
             safe_target = re.sub(r"[^A-Za-z0-9._-]+", "_", target_name).strip("_") or "default"
             title_slug = re.sub(r"[^A-Za-z0-9]+", "_", (title or kind or "finding")).strip("_").lower()
             title_slug = re.sub(r"_+", "_", title_slug)[:60].strip("_") or re.sub(r"[^a-z0-9]+", "_", (kind or "finding").lower()).strip("_")
-            fname = f"finding_{safe_target}_{title_slug}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}.html"
+            fname = f"finding_{safe_target}_{title_slug}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}.md"
             out_path = reports_dir / fname
-        out_path.write_text(html_doc, encoding="utf-8")
+        # Reports are Markdown now — rendered inside the GUI, no HTML needed.
+        md_doc = f"*Target: {target.host or target.name} — generated {generated_at}*\n\n" + md_text
+        out_path.write_text(md_doc, encoding="utf-8")
 
         if emit and hasattr(emit, "success"):
             verb = "updated" if existing_path else "auto-saved"
@@ -8958,7 +8883,6 @@ def _execute_export_report(args: Dict[str, Any], target: Target, emit: Any) -> D
     # ── Render ──
     resolved_findings.sort(key=lambda it: _SEVERITY_ORDER.get(str(it.get("severity", "info")).lower(), 4))
 
-    findings_html_parts = []
     findings_markdown_parts = []
     total_screenshots_embedded = 0
     for idx, item in enumerate(resolved_findings, 1):
@@ -9071,41 +8995,6 @@ def _execute_export_report(args: Dict[str, Any], target: Target, emit: Any) -> D
         finding_md_text = "\n".join(finding_md_parts).rstrip() + "\n"
         findings_markdown_parts.append(finding_md_text)
 
-        findings_html_parts.append(f"""
-<div class="finding" id="finding-{idx}">
-  <div class="finding-header">
-    <span class="sev-badge" style="background:{color}">{severity.upper()}</span>
-    <h2>{idx}. {title}</h2>
-    {f'<span class="cvss">CVSS {cvss}</span>' if cvss else ''}
-    <button class="copy-btn" onclick="hhCopy('finding-src-{idx}', this)">Copy as Markdown</button>
-  </div>
-  {f'<div class="section-label">Impact</div><p>{impact}</p>' if impact else ''}
-  {f'<div class="section-label">Steps to Reproduce</div>{steps_html}' if steps_html else ''}
-  {evidence_block}
-  {f'<div class="section-label">Screenshots</div><div class="evidence-shots">{shots_html}</div>' if shots_html else ''}
-  {f'''<div class="section-label">Remediation</div><p>{_html_escape(str(remediation)).replace(chr(10), "<br>")}</p>''' if remediation else ''}
-  <template id="finding-src-{idx}">{_html_escape(finding_md_text)}</template>
-</div>""")
-
-    timeline_html = ""
-    if include_timeline:
-        timeline = target.state.get("timeline") or []
-        if timeline:
-            rows = "".join(
-                f'<div class="tl-row"><span class="tl-ts">{_html_escape(e.get("ts", ""))}</span><span class="tl-event">{_html_escape(e.get("event", ""))}</span></div>'
-                for e in timeline if isinstance(e, dict)
-            )
-            timeline_html = f'<h2>Investigation Timeline</h2><div class="timeline">{rows}</div>'
-
-    warnings = []
-    if unmatched_refs:
-        warnings.append(f"{len(unmatched_refs)} finding_ref(s) did not match any recorded finding and were skipped: {', '.join(unmatched_refs)}")
-    if omitted:
-        warnings.append(f"{len(omitted)} recorded finding(s) were NOT included in this report: {', '.join(omitted)}")
-    warnings_html = ""
-    if warnings:
-        warnings_html = '<div class="warn-box"><strong>⚠ Report completeness warnings</strong><ul>' + "".join(f"<li>{_html_escape(w)}</li>" for w in warnings) + '</ul></div>'
-
     researcher_handle = str(load_config().get("researcher_handle") or "").strip()
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -9123,78 +9012,6 @@ def _execute_export_report(args: Dict[str, Any], target: Target, emit: Any) -> D
         report_md_parts += ["## Summary", "", executive_summary, ""]
     report_md_parts.append("".join(findings_markdown_parts).rstrip())
     report_md_text = "\n".join(report_md_parts).rstrip() + "\n"
-
-    html_doc = f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8">
-<title>{_html_escape(report_title)}</title>
-<style>
-  :root {{ color-scheme: dark; }}
-  body {{ background:#0d0f14; color:#e6e8eb; font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 960px; margin: 0 auto; padding: 40px 24px 80px; line-height:1.55; }}
-  h1 {{ font-size: 1.9em; border-bottom: 2px solid #ff3860; padding-bottom: 12px; }}
-  h2 {{ font-size: 1.25em; margin: 0; }}
-  .meta {{ color:#9aa0a8; font-size:.9em; margin-bottom: 28px; }}
-  .summary {{ background:#161922; border:1px solid #262b36; border-radius:8px; padding:18px 20px; margin-bottom:32px; }}
-  .finding {{ background:#12151c; border:1px solid #262b36; border-radius:10px; padding:22px 24px; margin-bottom:22px; }}
-  .finding-header {{ display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap; }}
-  .sev-badge {{ color:#0d0f14; font-weight:700; font-size:.75em; padding:3px 10px; border-radius:999px; letter-spacing:.04em; }}
-  .cvss {{ margin-left:auto; color:#9aa0a8; font-size:.85em; }}
-  .section-label {{ text-transform:uppercase; letter-spacing:.06em; font-size:.72em; color:#7d8590; margin:14px 0 4px; font-weight:600; }}
-  .code-block {{ background:#0a0c10; border:1px solid #262b36; border-radius:6px; padding:12px 14px; overflow-x:auto; font-size:.85em; white-space:pre-wrap; word-break:break-all; }}
-  .steps-list {{ margin:6px 0 0; padding-left:22px; }}
-  .steps-list li {{ margin-bottom:10px; }}
-  .steps-list .code-block {{ margin-top:6px; }}
-  .copy-btn {{ background:#1c2029; border:1px solid #333a47; color:#c7ccd3; font-size:.72em; padding:3px 10px; border-radius:6px; cursor:pointer; margin-left:8px; }}
-  .copy-btn:hover {{ background:#262b36; }}
-  .copy-btn.copied {{ background:#1f3d2a; border-color:#2f6b41; color:#8fe0a6; }}
-  .copy-btn-primary {{ background:#3a1f12; border-color:#ff7a45; color:#ffb088; font-weight:600; margin-left:0; }}
-  .copy-btn-primary:hover {{ background:#4a2817; }}
-  .evidence-shots {{ display:flex; flex-wrap:wrap; gap:12px; }}
-  .evidence-shot img {{ max-width:100%; border-radius:6px; border:1px solid #262b36; }}
-  .warn-box {{ background:#2a1a10; border:1px solid #6b3a12; border-radius:8px; padding:14px 18px; margin-bottom:28px; font-size:.9em; }}
-  .timeline {{ font-size:.85em; }}
-  .tl-row {{ display:flex; gap:14px; padding:5px 0; border-bottom:1px solid #1c2029; }}
-  .tl-ts {{ color:#7d8590; white-space:nowrap; }}
-  footer {{ margin-top:60px; color:#5c6370; font-size:.8em; text-align:center; }}
-</style></head>
-<body>
-<h1>{_html_escape(report_title)} <button class="copy-btn" onclick="hhCopy('title-src', this)">Copy</button></h1>
-<template id="title-src">{_html_escape(report_title)}</template>
-<div class="meta">Target: {_html_escape(target.host or target.name)} &nbsp;·&nbsp; Generated {generated_at}{f' &nbsp;·&nbsp; {_html_escape(researcher_handle)}' if researcher_handle else ''}
-  &nbsp;·&nbsp; <button class="copy-btn copy-btn-primary" onclick="hhCopy('report-md-src', this)">Copy Full Report as Markdown</button>
-</div>
-<template id="report-md-src">{_html_escape(report_md_text)}</template>
-{f'<div class="summary">{_html_escape(executive_summary).replace(chr(10), "<br>")} <button class="copy-btn" onclick="hhCopy(&#39;summary-src&#39;, this)">Copy</button><template id="summary-src">{_html_escape(executive_summary)}</template></div>' if executive_summary else ''}
-{warnings_html}
-{"".join(findings_html_parts)}
-{timeline_html}
-<footer>Generated by HELLHOUND — {len(resolved_findings)} finding(s), {total_screenshots_embedded} screenshot(s) embedded.</footer>
-<script>
-function hhCopy(id, btn) {{
-  var el = document.getElementById(id);
-  if (!el) return;
-  var text = el.content ? el.content.textContent : el.textContent;
-  var done = function() {{
-    var orig = btn.textContent;
-    btn.textContent = 'Copied';
-    btn.classList.add('copied');
-    setTimeout(function() {{ btn.textContent = orig; btn.classList.remove('copied'); }}, 1400);
-  }};
-  if (navigator.clipboard && navigator.clipboard.writeText) {{
-    navigator.clipboard.writeText(text).then(done, function() {{
-      var ta = document.createElement('textarea');
-      ta.value = text; document.body.appendChild(ta); ta.select();
-      try {{ document.execCommand('copy'); done(); }} catch (e) {{}}
-      document.body.removeChild(ta);
-    }});
-  }} else {{
-    var ta = document.createElement('textarea');
-    ta.value = text; document.body.appendChild(ta); ta.select();
-    try {{ document.execCommand('copy'); done(); }} catch (e) {{}}
-    document.body.removeChild(ta);
-  }}
-}}
-</script>
-</body></html>"""
 
     target_name = target.name if (target and target.name) else "default"
     reports_dir = Path(os.path.expanduser(f"~/.beast/targets/{target_name}/reports"))
@@ -9218,14 +9035,15 @@ function hhCopy(id, btn) {{
         if len(resolved_findings) == 1:
             title_slug = re.sub(r"[^A-Za-z0-9]+", "_", str(resolved_findings[0].get("finding_ref", ""))).strip("_").lower()
             title_slug = re.sub(r"_+", "_", title_slug)[:60].strip("_")
-            fname = f"report_{safe_target_for_fname}_{title_slug + '_' if title_slug else ''}{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}.html"
+            fname = f"report_{safe_target_for_fname}_{title_slug + '_' if title_slug else ''}{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}.md"
         else:
-            fname = f"report_{safe_target_for_fname}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}.html"
+            fname = f"report_{safe_target_for_fname}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}.md"
     else:
-        fname = f"report_{safe_target_for_fname}.html"
+        fname = f"report_{safe_target_for_fname}.md"
     out_path = reports_dir / fname
+    # Reports are Markdown now — the GUI renders it inline, no HTML file saved.
     try:
-        out_path.write_text(html_doc, encoding="utf-8")
+        out_path.write_text(report_md_text, encoding="utf-8")
     except Exception as e:
         return {"error": f"Failed to write report file: {e}"}
 
@@ -9240,27 +9058,19 @@ function hhCopy(id, btn) {{
     # generated from the exact same data, and nothing needs to be pasted
     # into the chat response at all — see the doctrine note at this tool's
     # registration about never re-emitting this text in prose.
-    md_fname = fname[:-5] + ".md" if fname.endswith(".html") else fname + ".md"
-    md_out_path = reports_dir / md_fname
-    md_write_error = None
-    try:
-        md_out_path.write_text(report_md_text, encoding="utf-8")
-    except Exception as e:
-        md_write_error = str(e)  # non-fatal — the HTML report is still the primary deliverable
-
     if emit and hasattr(emit, "success"):
         emit.success(f"[✓] Report written: {out_path} ({len(resolved_findings)} finding(s), {total_screenshots_embedded} screenshot(s) embedded)")
 
     result = {
         "status": "success",
         "path": str(out_path),
-        "markdown_path": str(md_out_path) if not md_write_error else None,
+        "markdown_path": str(out_path),
         "findings_included": len(resolved_findings),
         "screenshots_embedded": total_screenshots_embedded,
         "note": (
-            "Both the HTML report and a matching .md file were written to disk from the same data — "
-            "do NOT also retype/paste the report (or a markdown version of it) into your chat reply. "
-            "Tell the researcher it's ready and give the path(s); if they specifically want the "
+            "The report was written to disk as a Markdown (.md) file, rendered in the GUI — "
+            "do NOT also retype/paste the report into your chat reply. "
+            "Tell the researcher it's ready and give the path; if they specifically want the "
             "Markdown text pasted inline for a quick copy-paste, that's fine to do ONCE on explicit "
             "request, but it is not the default."
         ),
