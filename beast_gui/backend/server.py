@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess  # used by _ensure_brain_running / _stop_brain (annotations are strings via __future__)
 import sys
 from pathlib import Path
 
@@ -614,6 +615,24 @@ def _session_title_from(text: str) -> str:
     return (t[:40] + "…") if len(t) > 40 else (t or "New chat")
 
 
+def _is_empty_session(s: dict) -> bool:
+    """A fresh, untouched chat — no messages, no target, default title. These
+    are disposable so blank 'New chat' entries don't pile up."""
+    return (not s.get("entries")
+            and not (s.get("target") or "").strip()
+            and (s.get("title") or "New chat") == "New chat")
+
+
+def _prune_empty_sessions(keep_id: str = "") -> None:
+    """Delete abandoned empty 'New chat' sessions (except keep_id)."""
+    for meta in _list_sessions():
+        if meta["id"] == keep_id:
+            continue
+        s = _load_session(meta["id"])
+        if s and _is_empty_session(s):
+            _session_path(meta["id"]).unlink(missing_ok=True)
+
+
 @app.get("/api/sessions")
 def get_sessions():
     return {"sessions": _list_sessions()}
@@ -705,6 +724,7 @@ async def ws_endpoint(ws: WebSocket):
     # planning on the "default" target until one is attached.
     _recent = _list_sessions()
     active_session = (_load_session(_recent[0]["id"]) if _recent else None) or _new_session()
+    _prune_empty_sessions(active_session["id"])  # clear abandoned blank "New chat"s
     active_entries = active_session["entries"]
     active_target_name = (active_session.get("target") or "").strip() or "default"
     agent = get_agent(active_target_name)
@@ -787,19 +807,27 @@ async def ws_endpoint(ws: WebSocket):
         # Record user turn into persistent history
         active_entries.append({"kind": "log", "logKind": "user_echo", "text": text})
         # Title a fresh chat from its first real message (like a chat app does).
+        _titled_now = False
         if active_session.get("title") in (None, "", "New chat") and not text.strip().startswith("/"):
             active_session["title"] = _session_title_from(text)
+            _titled_now = True
         _save_session(active_session)
+        if _titled_now:  # refresh the sidebar so the chat shows its new title live
+            await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
 
         session_context = {"target": agent.target.name,
                            "scope_rules": getattr(agent.target, "scope_rules", None)}
         is_slash = text.strip().startswith("/")
+        # Stream the final answer token-by-token (runs on the worker thread;
+        # _push is queue-backed so it's safe from there). The frontend grows a
+        # live assistant bubble, then turn_end finalizes it.
+        _on_token = lambda t: gui_emit._push({"type": "token", "text": t})
         try:
             if is_slash:
                 final_response = await _run_slash(text, session_context)
             else:
                 final_response = await loop.run_in_executor(
-                    None, lambda: agent.handle_message(text, session_context=session_context, emit=gui_emit)
+                    None, lambda: agent.handle_message(text, session_context=session_context, emit=gui_emit, on_token=_on_token)
                 )
         except Exception as exc:
             err_msg = f"{type(exc).__name__}: {exc}"
@@ -823,7 +851,7 @@ async def ws_endpoint(ws: WebSocket):
             await ws.send_json({"type": "turn_status", "text": "Still mid-investigation — continuing on its own…"})
             try:
                 final_response = await loop.run_in_executor(
-                    None, lambda: agent.handle_message("continue", session_context=session_context, emit=gui_emit)
+                    None, lambda: agent.handle_message("continue", session_context=session_context, emit=gui_emit, on_token=_on_token)
                 )
             except Exception as exc:
                 err_msg = f"{type(exc).__name__}: {exc}"
@@ -857,11 +885,16 @@ async def ws_endpoint(ws: WebSocket):
                 await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
                 await _send_findings()
             elif mtype == "new_session":
-                _save_session(active_session)
-                _activate_session(_new_session(str(msg.get("target", "")).strip()))
-                await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
-                await ws.send_json({"type": "chat_history", "target": active_session.get("target") or "", "entries": active_entries, "session": active_session["id"]})
-                await _send_findings()
+                if _is_empty_session(active_session):
+                    # Already on a fresh blank chat — don't spawn a duplicate.
+                    await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
+                else:
+                    _save_session(active_session)
+                    _prune_empty_sessions(active_session["id"])
+                    _activate_session(_new_session(str(msg.get("target", "")).strip()))
+                    await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
+                    await ws.send_json({"type": "chat_history", "target": active_session.get("target") or "", "entries": active_entries, "session": active_session["id"]})
+                    await _send_findings()
             elif mtype == "new_session_for_program":
                 # New chat on a fresh asset, auto-attached to a program so it
                 # inherits that engagement's scope and shows under it.
@@ -886,6 +919,7 @@ async def ws_endpoint(ws: WebSocket):
                 if s:
                     _save_session(active_session)
                     _activate_session(s)
+                    _prune_empty_sessions(active_session["id"])  # drop the blank we just left
                     await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
                     await ws.send_json({"type": "chat_history", "target": active_session.get("target") or "", "entries": active_entries, "session": active_session["id"]})
                     await _send_findings()
@@ -950,7 +984,8 @@ def _ensure_brain_running() -> bool:
             preexec_fn=os.setsid if hasattr(os, "setsid") else None,
         )
         return True
-    except Exception:
+    except Exception as exc:
+        print(f"[!] Failed to start the Brain ({mode}) on :3220 — {type(exc).__name__}: {exc}")
         return False
 
 
