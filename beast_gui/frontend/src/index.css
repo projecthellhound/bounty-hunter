@@ -1,3 +1,11 @@
+:root {
+  /* Render native UA controls (the <select> dropdown popup, scrollbars,
+     checkboxes) in dark mode. Without this, WebKit2GTK — the engine behind the
+     `beast --gui` desktop window — draws them light, so the provider dropdowns
+     showed white/invisible text. Chromium happened to look fine; WebKit did not. */
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
 }
