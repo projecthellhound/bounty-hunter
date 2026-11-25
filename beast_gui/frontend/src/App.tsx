@@ -173,6 +173,8 @@ export default function App() {
   const [collapsedPrograms, setCollapsedPrograms] = useState<Set<string>>(new Set());
   const [sessions, setSessions] = useState<{ id: string; title: string; target: string; updated: number }[]>([]);
   const [activeSession, setActiveSession] = useState<string>("");
+  const [addingProgram, setAddingProgram] = useState<string>(""); // program name whose "+ asset" input is open
+  const [addAsset, setAddAsset] = useState<string>("");
   const [scope, setScope] = useState<Scope>({ kind: "target", name: "default" });
   const [navView, setNavView] = useState<"chat" | "graph">("chat");
   const [input, setInput] = useState("");
@@ -399,6 +401,16 @@ export default function App() {
       .catch(() => {});
   }, [activeSession, switchSession, newChat]);
 
+  // Add a new asset under a program and open a chat scoped to it.
+  const addToProgram = useCallback((program: string) => {
+    const asset = addAsset.trim();
+    if (asset) {
+      wsRef.current?.send(JSON.stringify({ type: "new_session_for_program", target: asset, program }));
+    }
+    setAddingProgram("");
+    setAddAsset("");
+  }, [addAsset]);
+
   const sortedFindings = [...findings].sort(
     (a, b) => (SEV_ORDER[a.severity] ?? 5) - (SEV_ORDER[b.severity] ?? 5) || a.id - b.id
   );
@@ -491,7 +503,25 @@ export default function App() {
                       <div className={`program-row ${scope.kind === "program" && scope.name === p.name ? "active" : ""}`}>
                         <button className="program-arrow" onClick={() => toggleProgram(p.name)}>{collapsed ? "▸" : "▾"}</button>
                         <button className="program-name" onClick={() => selectProgram(p)} title={`View the whole ${p.display_name} program`}>{p.display_name}</button>
+                        <button className="program-add" title={`Add an asset to ${p.display_name} and start a chat on it`}
+                          onClick={(e) => { e.stopPropagation(); setAddingProgram(addingProgram === p.name ? "" : p.name); setAddAsset(""); }}>+</button>
                       </div>
+                      {addingProgram === p.name && (
+                        <div className="program-add-row">
+                          <input
+                            className="program-add-input"
+                            autoFocus
+                            value={addAsset}
+                            placeholder="asset to attack, e.g. app.example.com"
+                            onChange={(e) => setAddAsset(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") { e.preventDefault(); addToProgram(p.name); }
+                              if (e.key === "Escape") { setAddingProgram(""); setAddAsset(""); }
+                            }}
+                          />
+                          <button className="program-add-go" onClick={() => addToProgram(p.name)} disabled={!addAsset.trim()}>Start</button>
+                        </div>
+                      )}
                       {!collapsed && mine.map((t) => (
                         <button key={t} className={`target nested ${t === activeTarget ? "active" : ""}`} onClick={() => switchTarget(t)} title={t}>
                           <span className="target-dot" /><span className="target-name">{t}</span>

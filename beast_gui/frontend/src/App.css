@@ -365,6 +365,47 @@
 .program-row.active .program-name {
   color: #ffffff;
 }
+/* Per-program "add an asset + start a chat" affordance */
+.program-add {
+  background: none;
+  border: none;
+  color: var(--faint, #6a6a6a);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px 9px;
+  opacity: 0;
+}
+.program-row:hover .program-add { opacity: 1; }
+.program-add:hover { color: #ff8a5c; }
+.program-add-row {
+  display: flex;
+  gap: 6px;
+  padding: 4px 10px 6px 26px;
+}
+.program-add-input {
+  flex: 1;
+  min-width: 0;
+  background: #1a1a1a;
+  border: 1px solid #3a3730;
+  color: var(--text, #e6e8eb);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-family: inherit;
+  font-size: 11.5px;
+}
+.program-add-input:focus { outline: none; border-color: #ff8a5c; }
+.program-add-go {
+  background: #ff6a3d;
+  color: #13120e;
+  border: none;
+  border-radius: 6px;
+  padding: 0 10px;
+  font-weight: 600;
+  font-size: 11px;
+  cursor: pointer;
+}
+.program-add-go:disabled { opacity: 0.4; cursor: default; }
 .target.nested {
   padding-left: 26px;
 }

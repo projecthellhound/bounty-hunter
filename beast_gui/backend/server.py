@@ -862,6 +862,25 @@ async def ws_endpoint(ws: WebSocket):
                 await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
                 await ws.send_json({"type": "chat_history", "target": active_session.get("target") or "", "entries": active_entries, "session": active_session["id"]})
                 await _send_findings()
+            elif mtype == "new_session_for_program":
+                # New chat on a fresh asset, auto-attached to a program so it
+                # inherits that engagement's scope and shows under it.
+                tgt = str(msg.get("target", "")).strip()
+                prog = str(msg.get("program", "")).strip()
+                if tgt:
+                    _save_session(active_session)
+                    _activate_session(_new_session(tgt))  # creates/loads the target
+                    if prog:
+                        try:
+                            from hellhound.core.tasks import attach_target_to_program
+                            attach_target_to_program(agent.target, prog)
+                        except Exception as _e:
+                            print(f"[!] attach_target_to_program failed: {_e}")
+                    _save_session(active_session)
+                    await ws.send_json({"type": "targets", "list": _list_targets()})
+                    await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
+                    await ws.send_json({"type": "chat_history", "target": active_session.get("target") or "", "entries": active_entries, "session": active_session["id"]})
+                    await _send_findings()
             elif mtype == "switch_session":
                 s = _load_session(str(msg.get("id", "")).strip())
                 if s:
