@@ -542,6 +542,107 @@ def _save_chat_history(target_name: str, entries: list) -> None:
         print(f"[!] Warning: failed to save chat history for {target_name}: {exc}")
 
 
+# ── chat sessions (freeform conversations, target optional) ─────────────────
+# A session is one conversation: {id, title, target, created, updated, entries}.
+# target "" means a scope-free/planning chat (runs on the "default" target until
+# one is attached). Stored one file per session so they list/switch like a chat
+# app's sidebar, independent of which target is active.
+def _sessions_dir() -> Path:
+    d = Path(os.path.expanduser("~/.beast")) / "gui_sessions"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _session_path(sid: str) -> Path:
+    return _sessions_dir() / f"{os.path.basename(str(sid))}.json"
+
+
+def _load_session(sid: str) -> Optional[dict]:
+    p = _session_path(sid)
+    if p.is_file():
+        try:
+            s = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(s, dict) and s.get("id"):
+                s.setdefault("entries", [])
+                s.setdefault("target", "")
+                s.setdefault("title", "New chat")
+                return s
+        except Exception:
+            return None
+    return None
+
+
+def _save_session(s: dict) -> None:
+    import time as _time
+    try:
+        s["updated"] = _time.time()
+        if len(s.get("entries", [])) > 400:
+            s["entries"] = s["entries"][-400:]
+        _session_path(s["id"]).write_text(json.dumps(s, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:
+        print(f"[!] Warning: failed to save session {s.get('id')}: {exc}")
+
+
+def _list_sessions() -> list:
+    out = []
+    for p in _sessions_dir().glob("*.json"):
+        try:
+            s = json.loads(p.read_text(encoding="utf-8"))
+            out.append({
+                "id": s["id"],
+                "title": s.get("title") or "New chat",
+                "target": s.get("target") or "",
+                "updated": s.get("updated", 0),
+            })
+        except Exception:
+            continue
+    out.sort(key=lambda x: x.get("updated", 0), reverse=True)
+    return out
+
+
+def _new_session(target: str = "") -> dict:
+    import time as _time, uuid as _uuid
+    sid = _uuid.uuid4().hex[:12]
+    now = _time.time()
+    s = {"id": sid, "title": "New chat", "target": target or "", "created": now, "updated": now, "entries": []}
+    _save_session(s)
+    return s
+
+
+def _session_title_from(text: str) -> str:
+    t = " ".join((text or "").strip().split())
+    return (t[:40] + "…") if len(t) > 40 else (t or "New chat")
+
+
+@app.get("/api/sessions")
+def get_sessions():
+    return {"sessions": _list_sessions()}
+
+
+@app.post("/api/sessions")
+async def post_session(payload: dict = None):
+    target = str((payload or {}).get("target", "")).strip()
+    return _new_session(target)
+
+
+@app.post("/api/sessions/delete")
+async def delete_session(payload: dict):
+    sid = str(payload.get("id", "")).strip()
+    if sid:
+        _session_path(sid).unlink(missing_ok=True)
+    return {"sessions": _list_sessions()}
+
+
+@app.post("/api/sessions/rename")
+async def rename_session(payload: dict):
+    sid = str(payload.get("id", "")).strip()
+    s = _load_session(sid)
+    if s:
+        s["title"] = _session_title_from(str(payload.get("title", ""))) or s.get("title")
+        _save_session(s)
+    return {"sessions": _list_sessions()}
+
+
 # ── event pump + websocket ────────────────────────────────────────────────
 async def _pump_events(ws: WebSocket, gui_emit: GuiEmit, stop: asyncio.Event, current_entries: list, target_getter: callable):
     """Drains gui_emit's thread-safe queue and forwards each event to the client,
@@ -599,44 +700,69 @@ async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     from hellhound.core.agent import get_agent
 
-    current_target = "default"
-    agent = get_agent(current_target)
+    # Resume the most-recent chat session, or start a fresh blank one. A session
+    # carries its own entries + an optional target; blank target = scope-free
+    # planning on the "default" target until one is attached.
+    _recent = _list_sessions()
+    active_session = (_load_session(_recent[0]["id"]) if _recent else None) or _new_session()
+    active_entries = active_session["entries"]
+    active_target_name = (active_session.get("target") or "").strip() or "default"
+    agent = get_agent(active_target_name)
+    if agent.target.name != active_target_name:  # force even a switch back to "default"
+        agent.set_target(active_target_name)
     gui_emit = GuiEmit()
     stop = asyncio.Event()
-
-    active_target_name = agent.target.name
-    active_entries = _load_chat_history(active_target_name)
 
     def get_active_target():
         return active_target_name
 
+    def _sync_agent_target(tgt: str):
+        # get_agent() deliberately refuses to switch *to* "default", so a chat
+        # going scope-free would otherwise stay stuck on the previous target.
+        # Force the move so the active agent always matches the chat.
+        nonlocal agent, active_target_name
+        active_target_name = tgt
+        agent = get_agent(tgt)
+        if agent.target.name != tgt:
+            agent.set_target(tgt)
+
+    def _activate_session(s: dict):
+        # Keep the SAME entries list object the pump already holds, so streaming
+        # events keep landing in the right place after a switch.
+        nonlocal active_session
+        active_entries.clear()
+        active_entries.extend(s.get("entries", []))
+        s["entries"] = active_entries
+        active_session = s
+        _sync_agent_target((s.get("target") or "").strip() or "default")
+
     pump_task = asyncio.create_task(_pump_events(ws, gui_emit, stop, active_entries, get_active_target))
 
     await ws.send_json({"type": "targets", "list": _list_targets()})
-    await ws.send_json({"type": "findings", "target": agent.target.name, "list": _findings_for(agent.target.name)})
-    # Send preserved conversation history across past sessions
-    await ws.send_json({"type": "chat_history", "target": agent.target.name, "entries": active_entries})
+    await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
+    await ws.send_json({"type": "findings", "target": active_target_name, "list": _findings_for(active_target_name)})
+    await ws.send_json({"type": "chat_history", "target": active_session.get("target") or "", "entries": active_entries, "session": active_session["id"]})
 
     loop = asyncio.get_running_loop()
 
     async def _send_findings():
-        await ws.send_json({"type": "findings", "target": agent.target.name, "list": _findings_for(agent.target.name)})
+        # Report the CHAT's target (blank "" for a scope-free chat), not the
+        # agent's fallback "default" — so the UI reads as having no target.
+        tgt = (active_session.get("target") or "").strip()
+        await ws.send_json({"type": "findings", "target": tgt, "list": _findings_for(tgt) if tgt else []})
 
     async def _resync_target_if_changed(new_target):
-        """A slash command (e.g. /target, /recon <other-site>) can repoint
-        session_context['target'] at a different target than the one this
-        connection had active — same resync tui.py/chat_ui.py do right after
-        dispatch() returns, extended to also swap the GUI's loaded history."""
-        nonlocal agent, active_target_name, active_entries
+        """A slash command (/target, /recon <other-site>, /program) can repoint
+        session_context['target']. Attach that target to the CURRENT chat (the
+        conversation continues; only its scope changes) rather than swapping to a
+        different per-target history."""
         if not new_target or new_target == active_target_name:
             return
-        _save_chat_history(active_target_name, active_entries)
-        agent = get_agent(new_target)
-        active_target_name = new_target
-        active_entries.clear()
-        active_entries.extend(_load_chat_history(new_target))
+        _sync_agent_target(new_target)
+        active_session["target"] = new_target
+        _save_session(active_session)
         await ws.send_json({"type": "targets", "list": _list_targets()})
-        await ws.send_json({"type": "chat_history", "target": new_target, "entries": active_entries})
+        await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
 
     async def _run_slash(text: str, session_context: dict):
         """Routes a "/"-prefixed message through the exact same central
@@ -660,7 +786,10 @@ async def ws_endpoint(ws: WebSocket):
         nonlocal active_entries
         # Record user turn into persistent history
         active_entries.append({"kind": "log", "logKind": "user_echo", "text": text})
-        _save_chat_history(active_target_name, active_entries)
+        # Title a fresh chat from its first real message (like a chat app does).
+        if active_session.get("title") in (None, "", "New chat") and not text.strip().startswith("/"):
+            active_session["title"] = _session_title_from(text)
+        _save_session(active_session)
 
         session_context = {"target": agent.target.name,
                            "scope_rules": getattr(agent.target, "scope_rules", None)}
@@ -675,13 +804,13 @@ async def ws_endpoint(ws: WebSocket):
         except Exception as exc:
             err_msg = f"{type(exc).__name__}: {exc}"
             active_entries.append({"kind": "log", "logKind": "error", "text": err_msg})
-            _save_chat_history(active_target_name, active_entries)
+            _save_session(active_session)
             await ws.send_json({"type": "error", "text": err_msg})
             return
 
         if final_response:
             active_entries.append({"kind": "log", "logKind": "success", "text": final_response})
-        _save_chat_history(active_target_name, active_entries)
+        _save_session(active_session)
 
         await ws.send_json({"type": "turn_end", "text": final_response,
                             "auto_continue": bool(getattr(agent, "_last_turn_auto_continue", False))})
@@ -699,13 +828,13 @@ async def ws_endpoint(ws: WebSocket):
             except Exception as exc:
                 err_msg = f"{type(exc).__name__}: {exc}"
                 active_entries.append({"kind": "log", "logKind": "error", "text": err_msg})
-                _save_chat_history(active_target_name, active_entries)
+                _save_session(active_session)
                 await ws.send_json({"type": "error", "text": err_msg})
                 return
 
             if final_response:
                 active_entries.append({"kind": "log", "logKind": "success", "text": final_response})
-            _save_chat_history(active_target_name, active_entries)
+            _save_session(active_session)
 
             await ws.send_json({"type": "turn_end", "text": final_response,
                                 "auto_continue": bool(getattr(agent, "_last_turn_auto_continue", False))})
@@ -718,31 +847,41 @@ async def ws_endpoint(ws: WebSocket):
             if mtype == "message":
                 await run_turn(str(msg.get("text", "")))
             elif mtype == "switch_target":
+                # Attach (or detach, name="") a target to the CURRENT chat — the
+                # conversation stays; only its scope changes.
                 name = str(msg.get("target", "")).strip()
-                if name:
-                    # Save current target before switching
-                    _save_chat_history(active_target_name, active_entries)
-                    agent = get_agent(name)
-                    active_target_name = name
-                    # Load chat history for newly active target
-                    active_entries.clear()
-                    active_entries.extend(_load_chat_history(name))
-                    await ws.send_json({"type": "targets", "list": _list_targets()})
+                active_session["target"] = name
+                _sync_agent_target(name or "default")
+                _save_session(active_session)
+                await ws.send_json({"type": "targets", "list": _list_targets()})
+                await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
+                await _send_findings()
+            elif mtype == "new_session":
+                _save_session(active_session)
+                _activate_session(_new_session(str(msg.get("target", "")).strip()))
+                await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
+                await ws.send_json({"type": "chat_history", "target": active_session.get("target") or "", "entries": active_entries, "session": active_session["id"]})
+                await _send_findings()
+            elif mtype == "switch_session":
+                s = _load_session(str(msg.get("id", "")).strip())
+                if s:
+                    _save_session(active_session)
+                    _activate_session(s)
+                    await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
+                    await ws.send_json({"type": "chat_history", "target": active_session.get("target") or "", "entries": active_entries, "session": active_session["id"]})
                     await _send_findings()
-                    await ws.send_json({"type": "chat_history", "target": name, "entries": active_entries})
+            elif mtype == "list_sessions":
+                await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
             elif mtype == "list_targets":
                 await ws.send_json({"type": "targets", "list": _list_targets()})
             elif mtype == "clear_history":
-                target_to_clear = str(msg.get("target", active_target_name)).strip()
-                p = _chat_history_path(target_to_clear)
-                if p.is_file():
-                    p.unlink(missing_ok=True)
                 active_entries.clear()
-                await ws.send_json({"type": "chat_history", "target": target_to_clear, "entries": []})
+                _save_session(active_session)
+                await ws.send_json({"type": "chat_history", "target": active_session.get("target") or "", "entries": [], "session": active_session["id"]})
     except WebSocketDisconnect:
         pass
     finally:
-        _save_chat_history(active_target_name, active_entries)
+        _save_session(active_session)
         stop.set()
         gui_emit.events.put({"type": "_stop"})
         pump_task.cancel()

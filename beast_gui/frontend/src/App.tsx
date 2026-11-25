@@ -171,6 +171,8 @@ export default function App() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [programs, setPrograms] = useState<ProgramMeta[]>([]);
   const [collapsedPrograms, setCollapsedPrograms] = useState<Set<string>>(new Set());
+  const [sessions, setSessions] = useState<{ id: string; title: string; target: string; updated: number }[]>([]);
+  const [activeSession, setActiveSession] = useState<string>("");
   const [scope, setScope] = useState<Scope>({ kind: "target", name: "default" });
   const [navView, setNavView] = useState<"chat" | "graph">("chat");
   const [input, setInput] = useState("");
@@ -211,6 +213,17 @@ export default function App() {
         const msg = JSON.parse(ev.data);
         switch (msg.type) {
           case "targets": setTargets(msg.list || []); break;
+          case "sessions": {
+            setSessions(msg.list || []);
+            if (msg.active) {
+              setActiveSession(msg.active);
+              // Keep the active target in step with the active chat's target,
+              // so a blank chat reads as scope-free (not the previous target).
+              const act = (msg.list || []).find((s: { id: string; target: string }) => s.id === msg.active);
+              if (act) { const t = act.target || "default"; setActiveTarget(t); setScope({ kind: "target", name: t }); }
+            }
+            break;
+          }
           case "findings":
             if (msg.target) setActiveTarget(msg.target);
             // A program-wide view aggregates findings across every target in
@@ -219,7 +232,9 @@ export default function App() {
             if (scopeRef.current.kind === "target") setFindings(msg.list || []);
             break;
           case "chat_history":
-            if (msg.target) setActiveTarget(msg.target);
+            // A blank session reports target "" → the chat is scope-free.
+            setActiveTarget(msg.target || "default");
+            if (msg.session) setActiveSession(msg.session);
             if (Array.isArray(msg.entries)) {
               setEntries(msg.entries.map(normalizeEntry));
             }
@@ -356,11 +371,33 @@ export default function App() {
   }, []);
 
   const clearChat = useCallback(() => {
-    if (confirm(`Clear chat history for target '${activeTarget}'?`)) {
-      wsRef.current?.send(JSON.stringify({ type: "clear_history", target: activeTarget }));
+    if (confirm("Clear this chat?")) {
+      wsRef.current?.send(JSON.stringify({ type: "clear_history" }));
       setEntries([]);
     }
-  }, [activeTarget]);
+  }, []);
+
+  // ── chat sessions ──────────────────────────────────────────────────────
+  const newChat = useCallback(() => {
+    wsRef.current?.send(JSON.stringify({ type: "new_session" }));
+  }, []);
+  const switchSession = useCallback((id: string) => {
+    if (id && id !== activeSession) wsRef.current?.send(JSON.stringify({ type: "switch_session", id }));
+  }, [activeSession]);
+  const deleteSession = useCallback((id: string) => {
+    const wasActive = id === activeSession;
+    fetch(`${API}/api/sessions/delete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })
+      .then((r) => r.json())
+      .then((d) => {
+        setSessions(d.sessions || []);
+        // If we deleted the open chat, land on the newest remaining one (or a fresh blank).
+        if (wasActive) {
+          const next = (d.sessions || [])[0];
+          if (next) switchSession(next.id); else newChat();
+        }
+      })
+      .catch(() => {});
+  }, [activeSession, switchSession, newChat]);
 
   const sortedFindings = [...findings].sort(
     (a, b) => (SEV_ORDER[a.severity] ?? 5) - (SEV_ORDER[b.severity] ?? 5) || a.id - b.id
@@ -408,6 +445,22 @@ export default function App() {
               <div className={`nav-item ${navView === "chat" ? "active" : ""}`} onClick={() => setNavView("chat")}>Findings</div>
               <div className={`nav-item ${navView === "graph" ? "active" : ""}`} onClick={() => setNavView("graph")}>Brain</div>
             </nav>
+            <div className="rail-section-title chats-head">
+              <span>CHATS</span>
+              <button className="new-chat-btn" title="Start a new chat" onClick={newChat}>+ New</button>
+            </div>
+            <div className="session-list">
+              {sessions.map((s) => (
+                <div key={s.id} className={`session-row ${s.id === activeSession ? "active" : ""}`}>
+                  <button className="session-open" onClick={() => switchSession(s.id)} title={s.target ? `on ${s.target}` : "scope-free chat"}>
+                    <span className="session-name">{s.title || "New chat"}</span>
+                    {s.target ? <span className="session-target">{s.target}</span> : null}
+                  </button>
+                  <button className="session-del" title="Delete chat" onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}>✕</button>
+                </div>
+              ))}
+              {sessions.length === 0 && <div className="empty">no chats yet</div>}
+            </div>
             <div className="rail-section-title">TARGETS</div>
             <div className="target-list">
               {(() => {
