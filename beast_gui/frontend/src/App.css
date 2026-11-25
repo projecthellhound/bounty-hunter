@@ -727,6 +727,56 @@
   line-height: 1.5;
   color: #e0e0e0;
 }
+/* A real monospace that carries box-drawing glyphs, kept on one line so a
+   framed finding doesn't wrap mid-box (the block scrolls instead). */
+.assistant-body.md pre,
+.assistant-body.md pre code {
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "DejaVu Sans Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+.assistant-body.md pre { white-space: pre; }
+
+/* Copy buttons (code blocks + whole message) */
+.code-block-wrap { position: relative; }
+.code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: #222;
+  border: 1px solid #3a3a3a;
+  color: #c7ccd3;
+  font-size: 10.5px;
+  padding: 2px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+  font-family: inherit;
+}
+.code-block-wrap:hover .code-copy { opacity: 1; }
+.code-copy.copied { background: #1f3d2a; border-color: #2f6b41; color: #8fe0a6; opacity: 1; }
+.msg-copy {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--faint, #6a6a6a);
+  font-size: 10.5px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.assistant-row:hover .msg-copy { color: var(--muted, #9aa0a8); }
+.msg-copy:hover { color: var(--text, #e6e8eb) !important; }
+.msg-copy.copied { color: #8fe0a6 !important; }
+
+/* Streaming caret while a reply is being typed out */
+.stream-caret {
+  display: inline-block;
+  width: 7px;
+  height: 13px;
+  margin: 0 0 -2px 2px;
+  background: #ff8a5c;
+  animation: caretBlink 1s steps(2) infinite;
+}
+@keyframes caretBlink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
 .assistant-body.md ul,
 .assistant-body.md ol {
   padding-left: 20px;

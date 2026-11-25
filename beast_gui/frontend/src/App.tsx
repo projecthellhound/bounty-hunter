@@ -19,6 +19,7 @@ interface UserMsg {
 interface AssistantMsg {
   kind: "assistant";
   text: string;
+  streaming?: boolean;
 }
 
 interface StatusLine {
@@ -103,8 +104,28 @@ function resultPreview(result: unknown): string {
 }
 
 function renderMd(text: string): { __html: string } {
-  try { return { __html: marked.parse(text) as string }; }
-  catch { return { __html: text }; }
+  try {
+    let html = marked.parse(text) as string;
+    // Wrap every code block with a Copy button (handled via delegation below).
+    html = html
+      .replace(/<pre>/g, '<div class="code-block-wrap"><button class="code-copy" type="button">Copy</button><pre>')
+      .replace(/<\/pre>/g, "</pre></div>");
+    return { __html: html };
+  } catch { return { __html: text }; }
+}
+
+// Delegated copy for code blocks: clicking a .code-copy copies its <pre> text.
+function handleCodeCopy(e: React.MouseEvent) {
+  const btn = (e.target as HTMLElement).closest(".code-copy") as HTMLElement | null;
+  if (!btn) return;
+  const pre = btn.parentElement?.querySelector("pre");
+  if (!pre) return;
+  navigator.clipboard?.writeText(pre.textContent || "").then(() => {
+    const orig = btn.textContent;
+    btn.textContent = "Copied";
+    btn.classList.add("copied");
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove("copied"); }, 1300);
+  }).catch(() => {});
 }
 
 // The registrable ("apex") domain of a host, so subdomains of one site group
@@ -266,10 +287,31 @@ export default function App() {
               return prev;
             });
             break;
+          case "token":
+            // Grow a live assistant bubble as tokens arrive (real-time stream).
+            setEntries((prev) => {
+              const last = prev[prev.length - 1];
+              if (last && last.kind === "assistant" && last.streaming) {
+                const next = prev.slice();
+                next[next.length - 1] = { ...last, text: last.text + (msg.text || "") };
+                return next;
+              }
+              return [...prev, { kind: "assistant", text: msg.text || "", streaming: true }];
+            });
+            break;
           case "turn_status": setStatusLabel(msg.text || ""); break;
           case "turn_end":
             setStatusLabel("");
-            if (msg.text) pushEntry({ kind: "assistant", text: msg.text });
+            // Finalize the streamed bubble (or create one if nothing streamed).
+            setEntries((prev) => {
+              const last = prev[prev.length - 1];
+              if (last && last.kind === "assistant" && last.streaming) {
+                const next = prev.slice();
+                next[next.length - 1] = { kind: "assistant", text: msg.text || last.text };
+                return next;
+              }
+              return msg.text ? [...prev, { kind: "assistant", text: msg.text }] : prev;
+            });
             if (!msg.auto_continue) setBusy(false);
             break;
           case "error":
@@ -373,10 +415,10 @@ export default function App() {
   }, []);
 
   const clearChat = useCallback(() => {
-    if (confirm("Clear this chat?")) {
-      wsRef.current?.send(JSON.stringify({ type: "clear_history" }));
-      setEntries([]);
-    }
+    // No browser confirm() dialog (it renders as an ugly native popup). With
+    // sessions this is low-stakes — start a New chat to keep history instead.
+    wsRef.current?.send(JSON.stringify({ type: "clear_history" }));
+    setEntries([]);
   }, []);
 
   // ── chat sessions ──────────────────────────────────────────────────────
@@ -808,8 +850,19 @@ function EntryRow({ entry }: { entry: Entry }) {
         <div className="assistant-content">
           <div className="assistant-header">
             <span className="assistant-name">BEAST</span>
+            {!entry.streaming && entry.text && (
+              <button className="msg-copy" title="Copy message"
+                onClick={(ev) => {
+                  const btn = ev.currentTarget;
+                  navigator.clipboard?.writeText(entry.text).then(() => {
+                    btn.classList.add("copied"); const o = btn.textContent; btn.textContent = "Copied";
+                    setTimeout(() => { btn.textContent = o; btn.classList.remove("copied"); }, 1300);
+                  }).catch(() => {});
+                }}>Copy</button>
+            )}
           </div>
-          <div className="assistant-body md" dangerouslySetInnerHTML={renderMd(entry.text)} />
+          <div className="assistant-body md" onClick={handleCodeCopy} dangerouslySetInnerHTML={renderMd(entry.text)} />
+          {entry.streaming && <span className="stream-caret" />}
         </div>
       </div>
     );
