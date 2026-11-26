@@ -565,6 +565,54 @@ export default function App() {
     return () => clearTimeout(h);
   }, [chatSearch]);
 
+  // ── Per-chat draft persistence ─────────────────────────────────────────
+  // Each conversation remembers its own unsent composer text. Previously a
+  // typed draft bled across chats (input was never reset on switch); now it's
+  // keyed by session in localStorage — saved as you type, restored on switch,
+  // and cleared on send (send() empties input, which this persists as "").
+  const draftSessionRef = useRef(activeSession);
+  // Save on keystroke, but ONLY for the session the text currently belongs to,
+  // so the switch-commit (activeSession already changed, input not yet swapped)
+  // can't clobber the other chat's saved draft. Defined before the load effect
+  // so on a switch it runs first and no-ops on the mismatch.
+  useEffect(() => {
+    if (activeSession && activeSession === draftSessionRef.current) {
+      try { localStorage.setItem(`beast.draft.${activeSession}`, input); } catch {}
+    }
+  }, [input, activeSession]);
+  // Load on switch: persist the outgoing chat's text, then swap in the incoming
+  // chat's saved draft. `input` here is still the OLD chat's text (not yet reset).
+  useEffect(() => {
+    if (activeSession === draftSessionRef.current) return;
+    try { if (draftSessionRef.current) localStorage.setItem(`beast.draft.${draftSessionRef.current}`, input); } catch {}
+    draftSessionRef.current = activeSession;
+    try { setInput(localStorage.getItem(`beast.draft.${activeSession}`) || ""); } catch { setInput(""); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSession]);
+
+  // ── Global keyboard shortcuts (chat-app ergonomics) ─────────────────────
+  // Ctrl/Cmd+N new chat · Ctrl/Cmd+F search · Ctrl/Cmd+B toggle sidebar ·
+  // Esc stops a running turn, else closes whatever overlay is open.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (busy) { stopTurn(); return; }
+        if (settingsOpen) { setSettingsOpen(false); return; }
+        if (report) { setReport(null); return; }
+        if (attachOpen) { setAttachOpen(false); return; }
+        if (searchOpen) { setSearchOpen(false); setChatSearch(""); return; }
+        return;
+      }
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === "n") { e.preventDefault(); newChat(); }
+      else if (k === "f") { e.preventDefault(); setSearchOpen(true); }
+      else if (k === "b") { e.preventDefault(); setLeftCollapsed((v) => !v); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, settingsOpen, report, attachOpen, searchOpen, stopTurn, newChat]);
+
   // Add a new asset under a program and open a chat scoped to it.
   const addToProgram = useCallback((program: string) => {
     const asset = addAsset.trim();
