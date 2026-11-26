@@ -261,6 +261,10 @@ export default function App() {
   const [userScrolled, setUserScrolled] = useState(false);
   const [commands, setCommands] = useState<CommandMeta[]>([]);
   const [cmdHighlight, setCmdHighlight] = useState(0);
+  // Command palette (Ctrl/Cmd+K): jump to any chat, target, or command by click.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [paletteIdx, setPaletteIdx] = useState(0);
 
   const wsRef = useRef<WebSocket | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
@@ -596,6 +600,7 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (paletteOpen) { setPaletteOpen(false); return; }
         if (busy) { stopTurn(); return; }
         if (settingsOpen) { setSettingsOpen(false); return; }
         if (report) { setReport(null); return; }
@@ -605,13 +610,14 @@ export default function App() {
       }
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       const k = e.key.toLowerCase();
-      if (k === "n") { e.preventDefault(); newChat(); }
+      if (k === "k") { e.preventDefault(); setPaletteQuery(""); setPaletteIdx(0); setPaletteOpen((v) => !v); }
+      else if (k === "n") { e.preventDefault(); newChat(); }
       else if (k === "f") { e.preventDefault(); setSearchOpen(true); }
       else if (k === "b") { e.preventDefault(); setLeftCollapsed((v) => !v); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [busy, settingsOpen, report, attachOpen, searchOpen, stopTurn, newChat]);
+  }, [busy, settingsOpen, report, attachOpen, searchOpen, paletteOpen, stopTurn, newChat]);
 
   // Add a new asset under a program and open a chat scoped to it.
   const addToProgram = useCallback((program: string) => {
@@ -685,6 +691,36 @@ export default function App() {
   const sortedFindings = [...findings].sort(
     (a, b) => (SEV_ORDER[a.severity] ?? 5) - (SEV_ORDER[b.severity] ?? 5) || a.id - b.id
   );
+
+  // Command-palette items: quick actions + every chat, target, and slash
+  // command, each with a click action. Reuses the existing handlers so the
+  // palette is pure navigation sugar, not a second code path.
+  type PItem = { group: string; label: string; hint?: string; run: () => void };
+  const paletteItems = useMemo<PItem[]>(() => {
+    const items: PItem[] = [
+      { group: "Actions", label: "New chat", hint: "Ctrl+N", run: () => newChat() },
+      { group: "Actions", label: "Search chats", hint: "Ctrl+F", run: () => setSearchOpen(true) },
+      { group: "Actions", label: "Findings workspace", run: () => setNavView("chat") },
+      { group: "Actions", label: "Brain (knowledge graph)", run: () => setNavView("graph") },
+      { group: "Actions", label: "Settings", run: () => setSettingsOpen(true) },
+    ];
+    for (const s of sessions) items.push({ group: "Chats", label: s.title || "New chat", hint: s.target || "scope-free", run: () => switchSession(s.id) });
+    for (const t of targets) items.push({ group: "Targets", label: t, run: () => switchTarget(t) });
+    for (const c of commands) items.push({ group: "Commands", label: c.name, hint: c.description, run: () => pickCommand(c) });
+    return items;
+  }, [sessions, targets, commands, newChat, switchSession, switchTarget, pickCommand]);
+
+  const paletteFiltered = useMemo(() => {
+    const q = paletteQuery.trim().toLowerCase();
+    if (!q) return paletteItems;
+    return paletteItems.filter((it) => (it.label + " " + (it.hint || "") + " " + it.group).toLowerCase().includes(q));
+  }, [paletteItems, paletteQuery]);
+
+  const runPalette = useCallback((it?: PItem) => {
+    setPaletteOpen(false);
+    setPaletteQuery("");
+    it?.run();
+  }, []);
   const actions = entries.filter((e): e is ToolCard => e.kind === "tool");
   const runningCount = actions.filter((a) => !a.done).length;
 
@@ -1192,6 +1228,40 @@ export default function App() {
           api={API}
           onClose={() => setReport(null)}
         />
+      )}
+      {paletteOpen && (
+        <div className="palette-backdrop" onClick={() => runPalette()}>
+          <div className="palette" onClick={(e) => e.stopPropagation()}>
+            <input
+              className="palette-input"
+              autoFocus
+              placeholder="Jump to a chat, target, or command…"
+              value={paletteQuery}
+              onChange={(e) => { setPaletteQuery(e.target.value); setPaletteIdx(0); }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") { e.preventDefault(); setPaletteIdx((i) => Math.min(paletteFiltered.length - 1, i + 1)); }
+                else if (e.key === "ArrowUp") { e.preventDefault(); setPaletteIdx((i) => Math.max(0, i - 1)); }
+                else if (e.key === "Enter") { e.preventDefault(); runPalette(paletteFiltered[paletteIdx]); }
+                else if (e.key === "Escape") { e.preventDefault(); setPaletteOpen(false); }
+              }}
+            />
+            <div className="palette-list">
+              {paletteFiltered.map((it, i) => (
+                <button
+                  key={it.group + it.label + i}
+                  className={`palette-row ${i === paletteIdx ? "active" : ""}`}
+                  onMouseEnter={() => setPaletteIdx(i)}
+                  onClick={() => runPalette(it)}
+                >
+                  <span className="palette-group">{it.group}</span>
+                  <span className="palette-label">{it.label}</span>
+                  {it.hint && <span className="palette-hint">{it.hint}</span>}
+                </button>
+              ))}
+              {paletteFiltered.length === 0 && <div className="empty">no matches</div>}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
