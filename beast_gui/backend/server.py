@@ -1240,6 +1240,12 @@ def _resolve_port() -> int:
     return int(os.environ.get("BEAST_GUI_PORT", "8787"))
 
 
+def _resolve_host() -> str:
+    # Localhost by default (desktop app / single-user). Containers set
+    # BEAST_GUI_HOST=0.0.0.0 so the browser UI is reachable from the host.
+    return os.environ.get("BEAST_GUI_HOST", "127.0.0.1")
+
+
 def _build_server(port: int):
     """A uvicorn Server we can drive ourselves (so the desktop-app window can run
     it on a background thread and shut it down when the window closes)."""
@@ -1266,7 +1272,7 @@ def main():
     import uvicorn
     _dump_tools_feed()
     _ensure_brain_running()
-    uvicorn.run(app, host="127.0.0.1", port=_resolve_port(), log_level="warning")
+    uvicorn.run(app, host=_resolve_host(), port=_resolve_port(), log_level="warning")
 
 
 def run_desktop(title: str = "BEAST") -> bool:

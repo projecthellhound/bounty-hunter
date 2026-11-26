@@ -1,0 +1,23 @@
+# Keep the build context small + reproducible — the image rebuilds these itself.
+.git
+__pycache__
+**/__pycache__
+*.pyc
+*.egg-info
+hellhound.egg-info
+tests
+benchmarks
+
+# Node: the committed frontend dist is shipped; node_modules are reinstalled.
+beast_gui/frontend/node_modules
+beast_gui/brain/node_modules
+beast_gui/brain/.next
+
+# Local dev / editor cruft
+.venv
+venv
+.beast-env
+.claude
+.idea
+.vscode
+*.log
