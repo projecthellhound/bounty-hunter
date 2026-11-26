@@ -236,6 +236,9 @@ export default function App() {
   const [searchResults, setSearchResults] = useState<{ id: string; title: string; target: string; snippet?: string }[] | null>(null);
   const [renamingId, setRenamingId] = useState("");
   const [renameDraft, setRenameDraft] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [dragOverProg, setDragOverProg] = useState("");
+  const [pendingAttach, setPendingAttach] = useState<{ id: string; target: string; program: string; label: string } | null>(null);
   const [addingProgram, setAddingProgram] = useState<string>(""); // program name whose "+ asset" input is open
   const [addAsset, setAddAsset] = useState<string>("");
   const [attachOpen, setAttachOpen] = useState<boolean>(false); // "attach this chat to a program" panel
@@ -512,10 +515,14 @@ export default function App() {
   }, []);
 
   // ── chat sessions ──────────────────────────────────────────────────────
+  // Any chat action yanks you into the chat view — so New chat / opening a chat
+  // works even while you're looking at the Brain panel (was stuck before).
   const newChat = useCallback(() => {
+    setNavView("chat");
     wsRef.current?.send(JSON.stringify({ type: "new_session" }));
   }, []);
   const switchSession = useCallback((id: string) => {
+    setNavView("chat");
     if (id && id !== activeSession) wsRef.current?.send(JSON.stringify({ type: "switch_session", id }));
   }, [activeSession]);
   const deleteSession = useCallback((id: string) => {
@@ -564,16 +571,49 @@ export default function App() {
     setAddAsset("");
   }, [addAsset]);
 
-  // Attach the CURRENT chat to a chosen program + asset (from the empty state).
+  // Attach the CURRENT chat to a chosen program + asset — works from the empty
+  // state AND the always-available topbar button (even mid-conversation).
   const attachCurrentToProgram = useCallback(() => {
     const asset = attachTarget.trim();
     if (asset) {
+      setNavView("chat");
       wsRef.current?.send(JSON.stringify({ type: "attach_current_to_program", target: asset, program: attachProgram }));
     }
     setAttachOpen(false);
     setAttachTarget("");
     setAttachProgram("");
   }, [attachTarget, attachProgram]);
+
+  // Open the attach popover, prefilling the program + the chat's current target.
+  const openAttach = useCallback(() => {
+    setAttachProgram(programs[0]?.name || "");
+    setAttachTarget(hasTarget ? activeTarget : "");
+    setAttachOpen(true);
+  }, [programs, hasTarget, activeTarget]);
+
+  // Drag a chat onto a program → attach it (confirm first). A chat that already
+  // has a target joins the program directly; a scope-free one opens the popover.
+  const dropChatOnProgram = useCallback((sessionId: string, sessionTarget: string, programName: string, programLabel: string) => {
+    setDragOverProg("");
+    const tgt = (sessionTarget || "").trim();
+    if (tgt) {
+      // Inline confirm (no native dialog) — rendered as a banner.
+      setPendingAttach({ id: sessionId, target: tgt, program: programName, label: programLabel });
+    } else {
+      // No target on that chat — open it and prompt for the asset to attach.
+      switchSession(sessionId);
+      setAttachProgram(programName);
+      setAttachTarget("");
+      setAttachOpen(true);
+    }
+  }, [switchSession]);
+
+  const confirmPendingAttach = useCallback(() => {
+    if (pendingAttach) {
+      wsRef.current?.send(JSON.stringify({ type: "attach_session_to_program", id: pendingAttach.id, program: pendingAttach.program }));
+    }
+    setPendingAttach(null);
+  }, [pendingAttach]);
 
   const sortedFindings = [...findings].sort(
     (a, b) => (SEV_ORDER[a.severity] ?? 5) - (SEV_ORDER[b.severity] ?? 5) || a.id - b.id
@@ -618,18 +658,38 @@ export default function App() {
         ) : (
           <>
             <nav className="nav">
-              <div className={`nav-item ${navView === "chat" ? "active" : ""}`} onClick={() => setNavView("chat")}>Findings</div>
-              <div className={`nav-item ${navView === "graph" ? "active" : ""}`} onClick={() => setNavView("graph")}>Brain</div>
+              <button className="nav-item" onClick={newChat} title="Start a new chat">
+                <svg className="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" d="M12 5v14M5 12h14"/></svg>
+                <span>New</span>
+              </button>
+              <button className={`nav-item ${searchOpen ? "active" : ""}`} title="Search your chats"
+                onClick={() => { setSearchOpen((v) => { const nv = !v; if (!nv) setChatSearch(""); return nv; }); }}>
+                <svg className="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2"/><path stroke="currentColor" strokeWidth="2" strokeLinecap="round" d="M21 21l-4-4"/></svg>
+                <span>Search</span>
+              </button>
+              <button className={`nav-item ${navView === "chat" ? "active" : ""}`} onClick={() => setNavView("chat")} title="Chat workspace & findings">
+                <svg className="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M4 5h16v11H7l-3 3z"/></svg>
+                <span>Findings</span>
+              </button>
+              <button className={`nav-item ${navView === "graph" ? "active" : ""}`} onClick={() => setNavView("graph")} title="Knowledge graph (Brain)">
+                <svg className="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="6" r="2.4" fill="none" stroke="currentColor" strokeWidth="1.8"/><circle cx="6" cy="17" r="2.4" fill="none" stroke="currentColor" strokeWidth="1.8"/><circle cx="18" cy="17" r="2.4" fill="none" stroke="currentColor" strokeWidth="1.8"/><path stroke="currentColor" strokeWidth="1.8" d="M11 8l-4 7M13 8l4 7M8 17h8"/></svg>
+                <span>Brain</span>
+              </button>
+              <button className="nav-item" onClick={() => setSettingsOpen(true)} title="Settings & API keys">
+                <svg className="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" strokeWidth="2"/><path fill="none" stroke="currentColor" strokeWidth="1.6" d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
+                <span>Settings</span>
+              </button>
             </nav>
             <div className="rail-section-title chats-head">
               <span>CHATS</span>
-              <button className="new-chat-btn" title="Start a new chat" onClick={newChat}>+ New</button>
             </div>
-            <div className="chat-search-wrap">
-              <input className="chat-search" placeholder="Search chats…" value={chatSearch}
-                onChange={(e) => setChatSearch(e.target.value)} />
-              {chatSearch && <button className="chat-search-x" title="Clear" onClick={() => setChatSearch("")}>✕</button>}
-            </div>
+            {searchOpen && (
+              <div className="chat-search-wrap">
+                <input className="chat-search" autoFocus placeholder="Search chats…" value={chatSearch}
+                  onChange={(e) => setChatSearch(e.target.value)} />
+                {chatSearch && <button className="chat-search-x" title="Clear" onClick={() => setChatSearch("")}>✕</button>}
+              </div>
+            )}
             <div className="session-list">
               {searchResults !== null ? (
                 <>
@@ -646,7 +706,10 @@ export default function App() {
               ) : (
                 <>
                   {sessions.map((s) => (
-                    <div key={s.id} className={`session-row ${s.id === activeSession ? "active" : ""}`}>
+                    <div key={s.id} className={`session-row ${s.id === activeSession ? "active" : ""}`}
+                      draggable={renamingId !== s.id}
+                      onDragStart={(e) => { e.dataTransfer.setData("application/json", JSON.stringify({ id: s.id, target: s.target || "" })); e.dataTransfer.effectAllowed = "move"; }}
+                      title="Drag onto a program below to attach this chat">
                       {renamingId === s.id ? (
                         <input className="session-rename" autoFocus value={renameDraft}
                           onChange={(e) => setRenameDraft(e.target.value)}
@@ -698,7 +761,16 @@ export default function App() {
                   const collapsed = collapsedPrograms.has(p.name);
                   return (
                     <div key={p.name} className="program-group">
-                      <div className={`program-row ${scope.kind === "program" && scope.name === p.name ? "active" : ""}`}>
+                      <div className={`program-row ${scope.kind === "program" && scope.name === p.name ? "active" : ""} ${dragOverProg === p.name ? "drop-hover" : ""}`}
+                        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (dragOverProg !== p.name) setDragOverProg(p.name); }}
+                        onDragLeave={() => setDragOverProg((cur) => (cur === p.name ? "" : cur))}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          try {
+                            const d = JSON.parse(e.dataTransfer.getData("application/json") || "{}");
+                            if (d.id) dropChatOnProgram(d.id, d.target || "", p.name, p.display_name);
+                          } catch { setDragOverProg(""); }
+                        }}>
                         <button className="program-arrow" onClick={() => toggleProgram(p.name)}>{collapsed ? "▸" : "▾"}</button>
                         <button className="program-name" onClick={() => selectProgram(p)} title={`View the whole ${p.display_name} program`}>{p.display_name}</button>
                         <button className="program-add" title={`Add an asset to ${p.display_name} and start a chat on it`}
@@ -793,6 +865,11 @@ export default function App() {
             {findings.length > 0 && (
               <span className="tb-findings-count">{findings.length} findings</span>
             )}
+            {programs.length > 0 && (
+              <button className="tb-attach-btn" title="Attach this chat to a program" onClick={openAttach}>
+                ⛓ Attach
+              </button>
+            )}
             <button className="tb-clear-btn" title="Clear chat for this target" onClick={clearChat}>
               clear chat
             </button>
@@ -808,6 +885,35 @@ export default function App() {
             </button>
           </div>
         </header>
+
+        {pendingAttach && (
+          <div className="attach-confirm">
+            <span>Attach <strong>{pendingAttach.target}</strong> to the <strong>{pendingAttach.label}</strong> program?</span>
+            <div className="attach-confirm-actions">
+              <button className="attach-go" onClick={confirmPendingAttach}>Attach</button>
+              <button className="attach-cancel" onClick={() => setPendingAttach(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {attachOpen && (
+          <div className="attach-popover">
+            <div className="attach-pop-title">Attach this chat to a program</div>
+            <div className="attach-pop-row">
+              <select value={attachProgram} onChange={(e) => setAttachProgram(e.target.value)}>
+                {programs.length === 0 && <option value="">no programs yet</option>}
+                {programs.map((p) => <option key={p.name} value={p.name}>{p.display_name}</option>)}
+              </select>
+              <input value={attachTarget} placeholder="asset domain, e.g. app.example.com"
+                onChange={(e) => setAttachTarget(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); attachCurrentToProgram(); } if (e.key === "Escape") setAttachOpen(false); }} />
+            </div>
+            <div className="attach-pop-actions">
+              <button className="attach-go" disabled={!attachTarget.trim() || !attachProgram} onClick={attachCurrentToProgram}>Attach</button>
+              <button className="attach-cancel" onClick={() => setAttachOpen(false)}>Cancel</button>
+            </div>
+          </div>
+        )}
 
         {navView === "graph" ? (
           <Brain
@@ -851,34 +957,11 @@ export default function App() {
                   <code>what did we find so far?</code>
                 </button>
               </div>
-              {!hasTarget && (
+              {!hasTarget && programs.length > 0 && (
                 <div className="empty-attach">
-                  {!attachOpen ? (
-                    <button className="attach-open-btn" onClick={() => { setAttachOpen(true); setAttachProgram(programs[0]?.name || ""); }}>
-                      ⛓ Attach this chat to a program
-                    </button>
-                  ) : (
-                    <div className="attach-panel">
-                      <select value={attachProgram} onChange={(e) => setAttachProgram(e.target.value)}>
-                        <option value="">No program — just this target</option>
-                        {programs.map((p) => <option key={p.name} value={p.name}>{p.display_name}</option>)}
-                      </select>
-                      <input
-                        autoFocus
-                        value={attachTarget}
-                        placeholder="target domain, e.g. app.example.com"
-                        onChange={(e) => setAttachTarget(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") { e.preventDefault(); attachCurrentToProgram(); }
-                          if (e.key === "Escape") setAttachOpen(false);
-                        }}
-                      />
-                      <div className="attach-actions">
-                        <button className="attach-go" disabled={!attachTarget.trim()} onClick={attachCurrentToProgram}>Attach & start</button>
-                        <button className="attach-cancel" onClick={() => setAttachOpen(false)}>Cancel</button>
-                      </div>
-                    </div>
-                  )}
+                  <button className="attach-open-btn" onClick={openAttach}>
+                    ⛓ Attach this chat to a program
+                  </button>
                 </div>
               )}
             </div>

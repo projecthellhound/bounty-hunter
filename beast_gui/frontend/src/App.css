@@ -163,13 +163,21 @@
 .nav-item {
   display: flex;
   align-items: center;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
   padding: 7px 11px;
+  border: none;
+  background: transparent;
+  text-align: left;
   border-radius: 7px;
   color: var(--muted);
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: 13px;
+  font-family: inherit;
   transition: color 0.12s, background 0.12s;
 }
+.nav-ic { width: 17px; height: 17px; flex: none; }
 .nav-item:hover {
   background: var(--panel-2);
   color: var(--text);
@@ -528,6 +536,72 @@
 }
 .tb-clear-btn:hover {
   color: var(--muted);
+}
+.tb-attach-btn {
+  background: transparent;
+  border: 1px solid #3a4150;
+  color: var(--muted, #9aa0a8);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 3px 9px;
+  border-radius: 6px;
+}
+.tb-attach-btn:hover { border-color: #ff8a5c; color: #ff8a5c; }
+
+/* Attach popover under the topbar (always-available attach) */
+.attach-popover {
+  margin: 8px 14px 0;
+  padding: 11px 13px;
+  background: #15171d;
+  border: 1px solid #2a2f3a;
+  border-radius: 10px;
+  box-shadow: 0 8px 22px rgba(0,0,0,.45);
+}
+.attach-pop-title { font-size: 12px; color: var(--muted, #9aa0a8); margin-bottom: 8px; }
+.attach-pop-row { display: flex; gap: 8px; }
+.attach-pop-row select, .attach-pop-row input {
+  background: #0f1115; border: 1px solid #2a2f3a; border-radius: 7px;
+  color: var(--text, #e6e8eb); font-size: 12.5px; padding: 7px 9px;
+}
+.attach-pop-row select { flex: 0 0 auto; max-width: 42%; }
+.attach-pop-row input { flex: 1; }
+.attach-pop-row select:focus, .attach-pop-row input:focus { outline: none; border-color: #ff8a5c; }
+.attach-pop-actions { display: flex; gap: 8px; margin-top: 9px; }
+.attach-pop-actions .attach-go {
+  background: #ff8a5c; color: #1a1205; border: none; border-radius: 7px;
+  padding: 6px 15px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+.attach-pop-actions .attach-go:disabled { opacity: .5; cursor: default; }
+.attach-pop-actions .attach-cancel {
+  background: transparent; border: none; color: var(--muted, #9aa0a8); cursor: pointer; font-size: 12.5px;
+}
+
+/* Inline attach confirmation (no native dialog) */
+.attach-confirm {
+  margin: 8px 14px 0;
+  padding: 10px 14px;
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  background: #1c1710;
+  border: 1px solid #ff8a5c;
+  border-radius: 10px;
+  font-size: 12.5px; color: var(--text, #e6e8eb);
+}
+.attach-confirm-actions { display: flex; gap: 8px; flex: none; }
+.attach-confirm .attach-go {
+  background: #ff8a5c; color: #1a1205; border: none; border-radius: 7px;
+  padding: 5px 15px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+.attach-confirm .attach-cancel {
+  background: transparent; border: none; color: var(--muted, #9aa0a8); cursor: pointer; font-size: 12.5px;
+}
+
+/* Drag-to-attach: a chat row dragged over a program highlights it */
+.session-row { cursor: grab; }
+.program-row.drop-hover {
+  outline: 1.5px dashed #ff8a5c;
+  outline-offset: -1px;
+  background: rgba(255,138,92,.1);
+  border-radius: 6px;
 }
 .tb-status {
   font-size: 11px;
