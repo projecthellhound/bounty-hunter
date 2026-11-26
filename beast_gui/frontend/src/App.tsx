@@ -245,13 +245,16 @@ export default function App() {
   const [attachProgram, setAttachProgram] = useState<string>("");
   const [attachTarget, setAttachTarget] = useState<string>("");
   const [scope, setScope] = useState<Scope>({ kind: "target", name: "default" });
-  const [navView, setNavView] = useState<"chat" | "graph">("chat");
+  const [navView, setNavView] = useState<"chat" | "graph">(() => (localStorage.getItem("beast.navView") === "graph" ? "graph" : "chat"));
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
   const [statusLabel, setStatusLabel] = useState("");
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
-  const [rightCollapsed, setRightCollapsed] = useState(true);
+  // Remembered layout — panel open/closed state persists across restarts.
+  const [leftCollapsed, setLeftCollapsed] = useState(() => localStorage.getItem("beast.leftCollapsed") === "1");
+  const [rightCollapsed, setRightCollapsed] = useState(() => localStorage.getItem("beast.rightCollapsed") !== "0");
+  // UI zoom (Ctrl +/-/0) — whole-app scale, remembered across restarts.
+  const [uiScale, setUiScale] = useState<number>(() => { const v = Number(localStorage.getItem("beast.uiScale")); return v >= 0.7 && v <= 1.6 ? v : 1; });
   // Resizable side panels — widths persist across restarts.
   const [leftW, setLeftW] = useState<number>(() => { const v = Number(localStorage.getItem("beast.leftW")); return v >= 180 && v <= 460 ? v : 248; });
   const [rightW, setRightW] = useState<number>(() => { const v = Number(localStorage.getItem("beast.rightW")); return v >= 240 && v <= 560 ? v : 324; });
@@ -614,10 +617,22 @@ export default function App() {
       else if (k === "n") { e.preventDefault(); newChat(); }
       else if (k === "f") { e.preventDefault(); setSearchOpen(true); }
       else if (k === "b") { e.preventDefault(); setLeftCollapsed((v) => !v); }
+      else if (k === "=" || k === "+") { e.preventDefault(); setUiScale((s) => Math.min(1.6, Math.round((s + 0.1) * 10) / 10)); }
+      else if (k === "-" || k === "_") { e.preventDefault(); setUiScale((s) => Math.max(0.7, Math.round((s - 0.1) * 10) / 10)); }
+      else if (k === "0") { e.preventDefault(); setUiScale(1); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [busy, settingsOpen, report, attachOpen, searchOpen, paletteOpen, stopTurn, newChat]);
+
+  // Apply + persist UI zoom (whole-app scale) and the remembered layout.
+  useEffect(() => {
+    (document.documentElement.style as any).zoom = String(uiScale);
+    localStorage.setItem("beast.uiScale", String(uiScale));
+  }, [uiScale]);
+  useEffect(() => { localStorage.setItem("beast.leftCollapsed", leftCollapsed ? "1" : "0"); }, [leftCollapsed]);
+  useEffect(() => { localStorage.setItem("beast.rightCollapsed", rightCollapsed ? "1" : "0"); }, [rightCollapsed]);
+  useEffect(() => { localStorage.setItem("beast.navView", navView); }, [navView]);
 
   // Add a new asset under a program and open a chat scoped to it.
   const addToProgram = useCallback((program: string) => {
