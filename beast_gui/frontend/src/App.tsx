@@ -439,15 +439,21 @@ export default function App() {
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [entries, statusLabel, userScrolled]);
 
-  const send = useCallback(() => {
-    const text = input.trim();
+  // Send arbitrary text straight to the backend (used by the composer and by
+  // the quick-action toolbar buttons, which must not depend on composer state).
+  const sendText = useCallback((raw: string) => {
+    const text = raw.trim();
     if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     pushEntry({ kind: "user", text });
     wsRef.current.send(JSON.stringify({ type: "message", text }));
-    setInput("");
     setBusy(true);
     setUserScrolled(false);
-  }, [input, pushEntry]);
+  }, [pushEntry]);
+  const send = useCallback(() => {
+    if (!input.trim()) return;
+    sendText(input);
+    setInput("");
+  }, [input, sendText]);
 
   // Stop the in-flight turn (agent bails at the next tool boundary).
   const stopTurn = useCallback(() => {
@@ -736,6 +742,23 @@ export default function App() {
     setPaletteQuery("");
     it?.run();
   }, []);
+
+  // Quick-action toolbar on the active target: common slash commands as buttons
+  // ("not a terminal"). Light read commands run on click; heavy ones (recon,
+  // hunt) prefill the composer so the scan is a deliberate second action.
+  // Only surfaces buttons whose command actually exists in the registry.
+  const quickActions = useMemo(() => {
+    const want = [
+      { name: "/recon", label: "Recon", prefill: true },
+      { name: "/scope", label: "Scope" },
+      { name: "/program", label: "Program" },
+      { name: "/report", label: "Report" },
+      { name: "/mcp", label: "MCP" },
+      { name: "/hunt", label: "Hunt", prefill: true },
+    ];
+    const have = new Set(commands.map((c) => c.name));
+    return want.filter((w) => have.has(w.name));
+  }, [commands]);
   const actions = entries.filter((e): e is ToolCard => e.kind === "tool");
   const runningCount = actions.filter((a) => !a.done).length;
 
@@ -1123,6 +1146,24 @@ export default function App() {
         )}
 
         <div className="composer-area">
+          {hasTarget && quickActions.length > 0 && (
+            <div className="quick-actions">
+              {quickActions.map((a) => (
+                <button
+                  key={a.name}
+                  className="quick-action"
+                  title={a.prefill ? `Prefill ${a.name}` : `Run ${a.name} on ${activeTarget}`}
+                  disabled={busy && !a.prefill}
+                  onClick={() => {
+                    if (a.prefill) { setInput(a.name + " "); inputRef.current?.focus(); }
+                    else sendText(a.name);
+                  }}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          )}
           {slashActive && slashFiltered.length > 0 && (
             <div className="slash-popup">
               {slashFiltered.map((c, i) => (
