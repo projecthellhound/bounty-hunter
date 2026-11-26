@@ -252,6 +252,10 @@ export default function App() {
   const [statusLabel, setStatusLabel] = useState("");
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(true);
+  // Resizable side panels — widths persist across restarts.
+  const [leftW, setLeftW] = useState<number>(() => { const v = Number(localStorage.getItem("beast.leftW")); return v >= 180 && v <= 460 ? v : 248; });
+  const [rightW, setRightW] = useState<number>(() => { const v = Number(localStorage.getItem("beast.rightW")); return v >= 240 && v <= 560 ? v : 324; });
+  const [resizing, setResizing] = useState<null | "left" | "right">(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [report, setReport] = useState<{ title: string; file: string; target: string } | null>(null);
   const [userScrolled, setUserScrolled] = useState(false);
@@ -615,6 +619,21 @@ export default function App() {
     setPendingAttach(null);
   }, [pendingAttach]);
 
+  // Panel resize drag — track the mouse while a divider is held.
+  useEffect(() => {
+    if (!resizing) return;
+    const onMove = (e: MouseEvent) => {
+      if (resizing === "left") setLeftW(Math.min(460, Math.max(180, e.clientX)));
+      else setRightW(Math.min(560, Math.max(240, window.innerWidth - e.clientX)));
+    };
+    const onUp = () => setResizing(null);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+  }, [resizing]);
+  useEffect(() => { localStorage.setItem("beast.leftW", String(leftW)); }, [leftW]);
+  useEffect(() => { localStorage.setItem("beast.rightW", String(rightW)); }, [rightW]);
+
   const sortedFindings = [...findings].sort(
     (a, b) => (SEV_ORDER[a.severity] ?? 5) - (SEV_ORDER[b.severity] ?? 5) || a.id - b.id
   );
@@ -622,7 +641,16 @@ export default function App() {
   const runningCount = actions.filter((a) => !a.done).length;
 
   return (
-    <div className={`app ${leftCollapsed ? "l-col" : ""} ${rightCollapsed ? "r-col" : ""}`}>
+    <div className={`app ${leftCollapsed ? "l-col" : ""} ${rightCollapsed ? "r-col" : ""} ${resizing ? "resizing" : ""}`}
+      style={{ ["--left-w" as any]: `${leftW}px`, ["--right-w" as any]: `${rightW}px` }}>
+      {!leftCollapsed && (
+        <div className={`resize-handle ${resizing === "left" ? "dragging" : ""}`} title="Drag to resize"
+          style={{ left: `${leftW}px` }} onMouseDown={(e) => { e.preventDefault(); setResizing("left"); }} />
+      )}
+      {!rightCollapsed && (
+        <div className={`resize-handle ${resizing === "right" ? "dragging" : ""}`} title="Drag to resize"
+          style={{ left: `calc(100% - ${rightW}px)` }} onMouseDown={(e) => { e.preventDefault(); setResizing("right"); }} />
+      )}
 
       {/* ── LEFT RAIL ─── */}
       <aside className={`rail left ${leftCollapsed ? "collapsed" : ""}`}>
