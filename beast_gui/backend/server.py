@@ -20,6 +20,7 @@ import json
 import os
 import subprocess  # used by _ensure_brain_running / _stop_brain (annotations are strings via __future__)
 import sys
+import threading  # cooperative turn-cancellation flag (Stop generation)
 from pathlib import Path
 
 # Make the existing `hellhound` package importable regardless of cwd —
@@ -657,9 +658,88 @@ async def rename_session(payload: dict):
     sid = str(payload.get("id", "")).strip()
     s = _load_session(sid)
     if s:
-        s["title"] = _session_title_from(str(payload.get("title", ""))) or s.get("title")
-        _save_session(s)
+        # Explicit rename keeps the user's exact text (capped), unlike the
+        # auto-title derivation used for a fresh chat's first message.
+        raw = " ".join(str(payload.get("title", "")).strip().split())
+        if raw:
+            s["title"] = raw[:60]
+            _save_session(s)
     return {"sessions": _list_sessions()}
+
+
+def _entry_plain_text(e: dict) -> str:
+    """Human-readable text of a transcript entry, for search + export."""
+    if not isinstance(e, dict):
+        return str(e)
+    if e.get("kind") == "tool":
+        return f"[tool] {e.get('tool','')} {e.get('args','')}"
+    return str(e.get("text", ""))
+
+
+@app.get("/api/sessions/search")
+def search_sessions(q: str = ""):
+    """Full-text search across every conversation (titles + message bodies).
+    Returns matching sessions with a short snippet around the first hit."""
+    needle = (q or "").strip().lower()
+    if not needle:
+        return {"results": []}
+    results = []
+    for p in _sessions_dir().glob("*.json"):
+        try:
+            s = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        title = s.get("title") or "New chat"
+        hay_title = title.lower()
+        snippet = ""
+        hit = needle in hay_title
+        for e in (s.get("entries") or []):
+            txt = _entry_plain_text(e)
+            low = txt.lower()
+            if needle in low:
+                hit = True
+                i = low.find(needle)
+                start = max(0, i - 40)
+                snippet = ("…" if start else "") + txt[start:i + len(needle) + 40].strip() + "…"
+                break
+        if hit:
+            results.append({
+                "id": s["id"], "title": title, "target": s.get("target") or "",
+                "updated": s.get("updated", 0), "snippet": snippet,
+            })
+    results.sort(key=lambda x: x.get("updated", 0), reverse=True)
+    return {"results": results[:50]}
+
+
+@app.get("/api/sessions/export")
+def export_session(id: str = ""):
+    """Download one conversation as Markdown (prompts + replies)."""
+    from fastapi.responses import PlainTextResponse
+    s = _load_session(str(id).strip())
+    if not s:
+        return PlainTextResponse("Session not found.", status_code=404)
+    title = s.get("title") or "Chat"
+    lines = [f"# {title}", ""]
+    if s.get("target"):
+        lines.append(f"**Target:** {s['target']}  ")
+    lines.append("")
+    for e in (s.get("entries") or []):
+        if not isinstance(e, dict):
+            continue
+        kind, lk = e.get("kind"), e.get("logKind")
+        txt = str(e.get("text", "")).strip()
+        if kind == "user" or lk == "user_echo":
+            lines.append(f"### 🧑 You\n\n{txt}\n")
+        elif kind == "assistant" or lk == "success":
+            lines.append(f"### 🐺 BEAST\n\n{txt}\n")
+        elif kind == "tool":
+            lines.append(f"> 🔧 `{e.get('tool','')}` — {_entry_plain_text(e)[:200]}\n")
+        # plain status/log lines are skipped to keep the export clean
+    md = "\n".join(lines)
+    fname = "".join(c if c.isalnum() or c in "-_" else "-" for c in title)[:40] or "chat"
+    return PlainTextResponse(md, media_type="text/markdown", headers={
+        "Content-Disposition": f'attachment; filename="{fname}.md"',
+    })
 
 
 # ── event pump + websocket ────────────────────────────────────────────────
@@ -732,9 +812,35 @@ async def ws_endpoint(ws: WebSocket):
         agent.set_target(active_target_name)
     gui_emit = GuiEmit()
     stop = asyncio.Event()
+    cancel_turn = threading.Event()  # set by "stop_turn"; polled via cancel_check
 
     def get_active_target():
         return active_target_name
+
+    def _truncate_to_user_turn(k: int) -> Optional[str]:
+        """Rewind the chat to just BEFORE the k-th user message (0-based):
+        drop that user_echo and everything after it from the visible transcript,
+        rewind the agent's model memory to the snapshot taken when that turn began,
+        and return the original text of that user turn (or None if not found).
+        Used by regenerate (k = last) and edit-&-resend."""
+        marks = [i for i, e in enumerate(active_entries)
+                 if isinstance(e, dict) and e.get("logKind") == "user_echo"]
+        if not marks or k < 0 or k >= len(marks):
+            return None
+        idx = marks[k]
+        orig = active_entries[idx].get("text")
+        hist_mark = active_entries[idx].get("hist")
+        del active_entries[idx:]
+        if isinstance(hist_mark, int):
+            try:
+                hist = getattr(agent, "history", None)
+                if isinstance(hist, list) and 0 <= hist_mark <= len(hist):
+                    del hist[hist_mark:]
+                    from hellhound.core.tasks import save_target
+                    save_target(agent.target)
+            except Exception as _e:
+                print(f"[!] history rewind failed: {_e}")
+        return orig
 
     def _sync_agent_target(tgt: str):
         # get_agent() deliberately refuses to switch *to* "default", so a chat
@@ -804,8 +910,14 @@ async def ws_endpoint(ws: WebSocket):
 
     async def run_turn(text: str):
         nonlocal active_entries
-        # Record user turn into persistent history
-        active_entries.append({"kind": "log", "logKind": "user_echo", "text": text})
+        cancel_turn.clear()  # fresh turn — clear any prior Stop request
+        # Record user turn into persistent history, tagging the agent-memory
+        # position so regenerate / edit-&-resend can rewind precisely here.
+        try:
+            _hist_mark = len(getattr(agent, "history", []) or [])
+        except Exception:
+            _hist_mark = 0
+        active_entries.append({"kind": "log", "logKind": "user_echo", "text": text, "hist": _hist_mark})
         # Title a fresh chat from its first real message (like a chat app does).
         _titled_now = False
         if active_session.get("title") in (None, "", "New chat") and not text.strip().startswith("/"):
@@ -827,7 +939,7 @@ async def ws_endpoint(ws: WebSocket):
                 final_response = await _run_slash(text, session_context)
             else:
                 final_response = await loop.run_in_executor(
-                    None, lambda: agent.handle_message(text, session_context=session_context, emit=gui_emit, on_token=_on_token)
+                    None, lambda: agent.handle_message(text, session_context=session_context, emit=gui_emit, on_token=_on_token, cancel_check=cancel_turn.is_set)
                 )
         except Exception as exc:
             err_msg = f"{type(exc).__name__}: {exc}"
@@ -840,18 +952,19 @@ async def ws_endpoint(ws: WebSocket):
             active_entries.append({"kind": "log", "logKind": "success", "text": final_response})
         _save_session(active_session)
 
-        await ws.send_json({"type": "turn_end", "text": final_response,
-                            "auto_continue": bool(getattr(agent, "_last_turn_auto_continue", False))})
+        _stopped = cancel_turn.is_set()
+        await ws.send_json({"type": "turn_end", "text": final_response, "stopped": _stopped,
+                            "auto_continue": bool(getattr(agent, "_last_turn_auto_continue", False)) and not _stopped})
         await _send_findings()
 
         # Same auto-continue loop as tui.py / chat_ui.py — only for free-text
         # hunting turns; a slash command's own handler already ran any
         # continuation it needed to completion before dispatch() returned.
-        while (not is_slash) and getattr(agent, "_last_turn_auto_continue", False):
+        while (not is_slash) and (not cancel_turn.is_set()) and getattr(agent, "_last_turn_auto_continue", False):
             await ws.send_json({"type": "turn_status", "text": "Still mid-investigation — continuing on its own…"})
             try:
                 final_response = await loop.run_in_executor(
-                    None, lambda: agent.handle_message("continue", session_context=session_context, emit=gui_emit, on_token=_on_token)
+                    None, lambda: agent.handle_message("continue", session_context=session_context, emit=gui_emit, on_token=_on_token, cancel_check=cancel_turn.is_set)
                 )
             except Exception as exc:
                 err_msg = f"{type(exc).__name__}: {exc}"
@@ -864,8 +977,9 @@ async def ws_endpoint(ws: WebSocket):
                 active_entries.append({"kind": "log", "logKind": "success", "text": final_response})
             _save_session(active_session)
 
-            await ws.send_json({"type": "turn_end", "text": final_response,
-                                "auto_continue": bool(getattr(agent, "_last_turn_auto_continue", False))})
+            _stopped = cancel_turn.is_set()
+            await ws.send_json({"type": "turn_end", "text": final_response, "stopped": _stopped,
+                                "auto_continue": bool(getattr(agent, "_last_turn_auto_continue", False)) and not _stopped})
             await _send_findings()
 
     try:
@@ -949,6 +1063,29 @@ async def ws_endpoint(ws: WebSocket):
                 active_entries.clear()
                 _save_session(active_session)
                 await ws.send_json({"type": "chat_history", "target": active_session.get("target") or "", "entries": [], "session": active_session["id"]})
+            elif mtype == "stop_turn":
+                # Cooperative cancel — the agent polls cancel_check at every tool
+                # boundary and bails out cleanly at the next one.
+                cancel_turn.set()
+            elif mtype == "regenerate":
+                # Re-run the LAST user turn: rewind transcript + model memory to
+                # just before it, then run it again for a fresh answer. The client
+                # updates its own view optimistically, so no chat_history repaint.
+                n_users = len([1 for e in active_entries if isinstance(e, dict) and e.get("logKind") == "user_echo"])
+                if n_users:
+                    orig = _truncate_to_user_turn(n_users - 1)
+                    if orig:
+                        await run_turn(orig)
+            elif mtype == "edit_resend":
+                # Edit the k-th user message and resend — forks the chat from there:
+                # everything after that message is discarded, then the edited text runs.
+                try:
+                    k = int(msg.get("user_index"))
+                except Exception:
+                    k = -1
+                new_text = str(msg.get("text", "")).strip()
+                if k >= 0 and new_text and _truncate_to_user_turn(k) is not None:
+                    await run_turn(new_text)
     except WebSocketDisconnect:
         pass
     finally:

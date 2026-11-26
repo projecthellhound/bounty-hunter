@@ -1,8 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { marked } from "marked";
+import { Marked } from "marked";
+import { markedHighlight } from "marked-highlight";
+import hljs from "highlight.js/lib/common";
+import "highlight.js/styles/github-dark.css";
 import logo from "./logo.png";
 import Brain from "./graph/Brain";
 import "./App.css";
+
+// marked + syntax highlighting for fenced code blocks (payloads, requests, JSON).
+const marked = new Marked(
+  markedHighlight({
+    emptyLangClass: "hljs",
+    langPrefix: "hljs language-",
+    highlight(code, lang) {
+      const language = lang && hljs.getLanguage(lang) ? lang : "";
+      try {
+        return language
+          ? hljs.highlight(code, { language }).value
+          : hljs.highlightAuto(code).value;
+      } catch {
+        return code;
+      }
+    },
+  })
+);
 
 const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
 const API = "";
@@ -211,6 +232,10 @@ export default function App() {
   const [collapsedPrograms, setCollapsedPrograms] = useState<Set<string>>(new Set());
   const [sessions, setSessions] = useState<{ id: string; title: string; target: string; updated: number }[]>([]);
   const [activeSession, setActiveSession] = useState<string>("");
+  const [chatSearch, setChatSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<{ id: string; title: string; target: string; snippet?: string }[] | null>(null);
+  const [renamingId, setRenamingId] = useState("");
+  const [renameDraft, setRenameDraft] = useState("");
   const [addingProgram, setAddingProgram] = useState<string>(""); // program name whose "+ asset" input is open
   const [addAsset, setAddAsset] = useState<string>("");
   const [attachOpen, setAttachOpen] = useState<boolean>(false); // "attach this chat to a program" panel
@@ -410,6 +435,47 @@ export default function App() {
     setUserScrolled(false);
   }, [input, pushEntry]);
 
+  // Stop the in-flight turn (agent bails at the next tool boundary).
+  const stopTurn = useCallback(() => {
+    wsRef.current?.send(JSON.stringify({ type: "stop_turn" }));
+  }, []);
+
+  // Regenerate the last reply: keep the last user message, drop the reply (and
+  // its tool cards), ask the backend to rewind + re-run. Optimistic client view.
+  const regenerate = useCallback(() => {
+    if (busy || !wsRef.current) return;
+    setEntries((prev) => {
+      const next = prev.slice();
+      while (next.length && next[next.length - 1].kind !== "user") next.pop();
+      return next;
+    });
+    wsRef.current.send(JSON.stringify({ type: "regenerate" }));
+    setBusy(true);
+    setUserScrolled(false);
+  }, [busy]);
+
+  // Edit the k-th user message and resend — fork the chat from that point.
+  const editResend = useCallback((userIndex: number, text: string) => {
+    const t = text.trim();
+    if (!t || !wsRef.current) return;
+    setEntries((prev) => {
+      let count = -1, cut = prev.length;
+      for (let i = 0; i < prev.length; i++) {
+        if (prev[i].kind === "user") { count++; if (count === userIndex) { cut = i; break; } }
+      }
+      return [...prev.slice(0, cut), { kind: "user", text: t } as Entry];
+    });
+    wsRef.current.send(JSON.stringify({ type: "edit_resend", user_index: userIndex, text: t }));
+    setBusy(true);
+    setUserScrolled(false);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    const el = logRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    setUserScrolled(false);
+  }, []);
+
   const switchTarget = useCallback((name: string) => {
     wsRef.current?.send(JSON.stringify({ type: "switch_target", target: name }));
     setScope({ kind: "target", name });
@@ -466,6 +532,27 @@ export default function App() {
       })
       .catch(() => {});
   }, [activeSession, switchSession, newChat]);
+  const renameSession = useCallback((id: string, title: string) => {
+    const t = title.trim();
+    setRenamingId("");
+    if (!t) return;
+    fetch(`${API}/api/sessions/rename`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, title: t }) })
+      .then((r) => r.json()).then((d) => setSessions(d.sessions || [])).catch(() => {});
+  }, []);
+  const exportChat = useCallback((id: string) => {
+    window.open(`${API}/api/sessions/export?id=${encodeURIComponent(id)}`, "_blank");
+  }, []);
+
+  // Debounced full-text search across all conversations.
+  useEffect(() => {
+    const q = chatSearch.trim();
+    if (!q) { setSearchResults(null); return; }
+    const h = setTimeout(() => {
+      fetch(`${API}/api/sessions/search?q=${encodeURIComponent(q)}`)
+        .then((r) => r.json()).then((d) => setSearchResults(d.results || [])).catch(() => setSearchResults([]));
+    }, 220);
+    return () => clearTimeout(h);
+  }, [chatSearch]);
 
   // Add a new asset under a program and open a chat scoped to it.
   const addToProgram = useCallback((program: string) => {
@@ -538,17 +625,51 @@ export default function App() {
               <span>CHATS</span>
               <button className="new-chat-btn" title="Start a new chat" onClick={newChat}>+ New</button>
             </div>
+            <div className="chat-search-wrap">
+              <input className="chat-search" placeholder="Search chats…" value={chatSearch}
+                onChange={(e) => setChatSearch(e.target.value)} />
+              {chatSearch && <button className="chat-search-x" title="Clear" onClick={() => setChatSearch("")}>✕</button>}
+            </div>
             <div className="session-list">
-              {sessions.map((s) => (
-                <div key={s.id} className={`session-row ${s.id === activeSession ? "active" : ""}`}>
-                  <button className="session-open" onClick={() => switchSession(s.id)} title={s.target ? `on ${s.target}` : "scope-free chat"}>
-                    <span className="session-name">{s.title || "New chat"}</span>
-                    {s.target ? <span className="session-target">{s.target}</span> : null}
-                  </button>
-                  <button className="session-del" title="Delete chat" onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}>✕</button>
-                </div>
-              ))}
-              {sessions.length === 0 && <div className="empty">no chats yet</div>}
+              {searchResults !== null ? (
+                <>
+                  {searchResults.map((s) => (
+                    <div key={s.id} className={`session-row ${s.id === activeSession ? "active" : ""}`}>
+                      <button className="session-open" onClick={() => { switchSession(s.id); setChatSearch(""); }} title={s.target ? `on ${s.target}` : "scope-free chat"}>
+                        <span className="session-name">{s.title || "New chat"}</span>
+                        {s.snippet ? <span className="session-snippet">{s.snippet}</span> : null}
+                      </button>
+                    </div>
+                  ))}
+                  {searchResults.length === 0 && <div className="empty">no matches</div>}
+                </>
+              ) : (
+                <>
+                  {sessions.map((s) => (
+                    <div key={s.id} className={`session-row ${s.id === activeSession ? "active" : ""}`}>
+                      {renamingId === s.id ? (
+                        <input className="session-rename" autoFocus value={renameDraft}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          onBlur={() => renameSession(s.id, renameDraft)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") renameSession(s.id, renameDraft);
+                            if (e.key === "Escape") setRenamingId("");
+                          }} />
+                      ) : (
+                        <button className="session-open" onClick={() => switchSession(s.id)}
+                          onDoubleClick={() => { setRenamingId(s.id); setRenameDraft(s.title || ""); }}
+                          title={s.target ? `on ${s.target} — double-click to rename` : "scope-free chat — double-click to rename"}>
+                          <span className="session-name">{s.title || "New chat"}</span>
+                          {s.target ? <span className="session-target">{s.target}</span> : null}
+                        </button>
+                      )}
+                      <button className="session-act" title="Export as Markdown" onClick={(e) => { e.stopPropagation(); exportChat(s.id); }}>↓</button>
+                      <button className="session-del" title="Delete chat" onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}>✕</button>
+                    </div>
+                  ))}
+                  {sessions.length === 0 && <div className="empty">no chats yet</div>}
+                </>
+              )}
             </div>
             <div className="rail-section-title">TARGETS</div>
             <div className="target-list">
@@ -763,9 +884,22 @@ export default function App() {
             </div>
           )}
 
-          {entries.map((e, i) => (
-            <EntryRow key={i} entry={e} />
-          ))}
+          {(() => {
+            let lastAssistantIdx = -1;
+            for (let j = entries.length - 1; j >= 0; j--) { if (entries[j].kind === "assistant") { lastAssistantIdx = j; break; } }
+            let uCount = -1;
+            return entries.map((e, i) => {
+              let userIndex = -1;
+              if (e.kind === "user") { uCount++; userIndex = uCount; }
+              return (
+                <EntryRow key={i} entry={e}
+                  isLastAssistant={i === lastAssistantIdx && !busy}
+                  userIndex={userIndex}
+                  onRegenerate={regenerate}
+                  onEdit={busy ? undefined : editResend} />
+              );
+            });
+          })()}
 
           {statusLabel && (
             <div className="turn-status-bar">
@@ -774,6 +908,12 @@ export default function App() {
             </div>
           )}
         </div>
+
+        {userScrolled && entries.length > 0 && (
+          <button className="scroll-bottom" title="Jump to latest" onClick={scrollToBottom}>
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M6 13l6 6 6-6"/></svg>
+          </button>
+        )}
 
         <div className="composer-area">
           {slashActive && slashFiltered.length > 0 && (
@@ -819,9 +959,16 @@ export default function App() {
               }}
               rows={1}
             />
-            <button className="send" onClick={send} disabled={!connected || !input.trim()}>
-              {busy ? "…" : "Send"}
-            </button>
+            {busy ? (
+              <button className="send stop" onClick={stopTurn} title="Stop generating">
+                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>
+                Stop
+              </button>
+            ) : (
+              <button className="send" onClick={send} disabled={!connected || !input.trim()}>
+                Send
+              </button>
+            )}
           </div>
         </div>
         </>
@@ -895,12 +1042,47 @@ export default function App() {
 }
 
 /** Component to render any Entry row (User prompt, Assistant reply, Tool Card, or Status) */
-function EntryRow({ entry }: { entry: Entry }) {
+function EntryRow({ entry, isLastAssistant, userIndex, onRegenerate, onEdit }: {
+  entry: Entry;
+  isLastAssistant?: boolean;
+  userIndex?: number;
+  onRegenerate?: () => void;
+  onEdit?: (userIndex: number, text: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
   if (entry.kind === "user") {
+    const canEdit = !!onEdit && (userIndex ?? -1) >= 0;
+    if (editing) {
+      const commit = () => { onEdit?.(userIndex ?? -1, draft); setEditing(false); };
+      return (
+        <div className="chat-row user-row">
+          <div className="user-edit">
+            <textarea className="user-edit-area" value={draft} autoFocus
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit(); }
+                if (e.key === "Escape") setEditing(false);
+              }} />
+            <div className="user-edit-actions">
+              <button className="ue-btn" onClick={commit}>Send</button>
+              <button className="ue-btn ghost" onClick={() => setEditing(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="chat-row user-row">
         <div className="user-bubble">
           {entry.text}
+          {canEdit && (
+            <button className="user-edit-btn" title="Edit & resend"
+              onClick={() => { setDraft(entry.text); setEditing(true); }}>
+              <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+            </button>
+          )}
         </div>
       </div>
     );
@@ -942,6 +1124,12 @@ function EntryRow({ entry }: { entry: Entry }) {
                 <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"/></svg>
                 <span className="act-label">Share</span>
               </button>
+              {isLastAssistant && onRegenerate && (
+                <button className="act-btn" title="Regenerate reply" onClick={onRegenerate}>
+                  <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+                  <span className="act-label">Retry</span>
+                </button>
+              )}
               {(entry.elapsedMs || entry.at) && (
                 <span className="act-time" title={fmtClock(entry.at)}>
                   {entry.elapsedMs ? fmtDuration(entry.elapsedMs) : fmtClock(entry.at)}
