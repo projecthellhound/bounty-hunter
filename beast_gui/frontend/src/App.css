@@ -886,7 +886,7 @@
 }
 .code-block-wrap:hover .code-copy { opacity: 1; }
 .code-copy.copied { background: #1f3d2a; border-color: #2f6b41; color: #8fe0a6; opacity: 1; }
-/* Hover action bar under an AI reply (copy · share · time) — Claude-style */
+/* Hover action bar under an AI reply (copy · share · time) */
 .msg-actions {
   display: flex;
   align-items: center;

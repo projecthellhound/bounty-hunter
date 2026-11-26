@@ -834,9 +834,6 @@ export default function App() {
               })()}
               {targets.length === 0 && <div className="empty">no targets yet</div>}
             </div>
-            <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
-              ⚙ Settings
-            </button>
           </>
         )}
       </aside>
