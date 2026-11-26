@@ -812,18 +812,39 @@
 }
 .code-block-wrap:hover .code-copy { opacity: 1; }
 .code-copy.copied { background: #1f3d2a; border-color: #2f6b41; color: #8fe0a6; opacity: 1; }
-.msg-copy {
-  margin-left: auto;
+/* Hover action bar under an AI reply (copy · share · time) — Claude-style */
+.msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.assistant-row:hover .msg-actions { opacity: 1; }
+.act-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   background: transparent;
   border: none;
-  color: var(--faint, #6a6a6a);
-  font-size: 10.5px;
+  color: var(--muted, #9aa0a8);
+  font-size: 11.5px;
   cursor: pointer;
-  padding: 2px 6px;
+  padding: 4px 7px;
+  border-radius: 6px;
+  line-height: 1;
 }
-.assistant-row:hover .msg-copy { color: var(--muted, #9aa0a8); }
-.msg-copy:hover { color: var(--text, #e6e8eb) !important; }
-.msg-copy.copied { color: #8fe0a6 !important; }
+.act-btn svg { display: block; }
+.act-btn:hover { background: rgba(255,255,255,.07); color: var(--text, #e6e8eb); }
+.act-btn.ok { color: #8fe0a6; }
+.act-time {
+  margin-left: 6px;
+  color: var(--faint, #6a6a6a);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
 
 /* Streaming caret while a reply is being typed out */
 .stream-caret {

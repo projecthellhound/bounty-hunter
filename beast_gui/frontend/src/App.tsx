@@ -20,6 +20,9 @@ interface AssistantMsg {
   kind: "assistant";
   text: string;
   streaming?: boolean;
+  startedAt?: number;   // ms epoch when the bubble began streaming
+  at?: number;          // ms epoch when the turn finished
+  elapsedMs?: number;   // generation duration
 }
 
 interface StatusLine {
@@ -149,6 +152,20 @@ function apexDomain(host: string): string {
 function subLabel(host: string, apex: string): string {
   const h = host.replace(/:\d+$/, "");
   return h === apex ? h : (h.endsWith("." + apex) ? h.slice(0, -(apex.length + 1)) : h);
+}
+// "4s" / "1m 20s" — how long the reply took to generate.
+function fmtDuration(ms?: number): string {
+  if (!ms || ms < 0) return "";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60), r = s % 60;
+  return r ? `${m}m ${r}s` : `${m}m`;
+}
+// Clock time the reply landed, e.g. "2:45 PM".
+function fmtClock(at?: number): string {
+  if (!at) return "";
+  try { return new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+  catch { return ""; }
 }
 
 /** Normalize raw saved entries from JSON into strongly-typed Entry objects */
@@ -299,7 +316,7 @@ export default function App() {
                 next[next.length - 1] = { ...last, text: last.text + (msg.text || "") };
                 return next;
               }
-              return [...prev, { kind: "assistant", text: msg.text || "", streaming: true }];
+              return [...prev, { kind: "assistant", text: msg.text || "", streaming: true, startedAt: Date.now() }];
             });
             break;
           case "turn_status": setStatusLabel(msg.text || ""); break;
@@ -308,12 +325,16 @@ export default function App() {
             // Finalize the streamed bubble (or create one if nothing streamed).
             setEntries((prev) => {
               const last = prev[prev.length - 1];
+              const now = Date.now();
               if (last && last.kind === "assistant" && last.streaming) {
                 const next = prev.slice();
-                next[next.length - 1] = { kind: "assistant", text: msg.text || last.text };
+                next[next.length - 1] = {
+                  kind: "assistant", text: msg.text || last.text, at: now,
+                  elapsedMs: last.startedAt ? now - last.startedAt : undefined,
+                };
                 return next;
               }
-              return msg.text ? [...prev, { kind: "assistant", text: msg.text }] : prev;
+              return msg.text ? [...prev, { kind: "assistant", text: msg.text, at: now }] : prev;
             });
             if (!msg.auto_continue) setBusy(false);
             break;
@@ -894,19 +915,40 @@ function EntryRow({ entry }: { entry: Entry }) {
         <div className="assistant-content">
           <div className="assistant-header">
             <span className="assistant-name">BEAST</span>
-            {!entry.streaming && entry.text && (
-              <button className="msg-copy" title="Copy message"
-                onClick={(ev) => {
-                  const btn = ev.currentTarget;
-                  navigator.clipboard?.writeText(entry.text).then(() => {
-                    btn.classList.add("copied"); const o = btn.textContent; btn.textContent = "Copied";
-                    setTimeout(() => { btn.textContent = o; btn.classList.remove("copied"); }, 1300);
-                  }).catch(() => {});
-                }}>Copy</button>
-            )}
           </div>
           <div className="assistant-body md" onClick={handleCodeCopy} dangerouslySetInnerHTML={renderMd(entry.text)} />
           {entry.streaming && <span className="stream-caret" />}
+          {!entry.streaming && entry.text && (
+            <div className="msg-actions">
+              <button className="act-btn" title="Copy message"
+                onClick={(ev) => {
+                  const btn = ev.currentTarget;
+                  navigator.clipboard?.writeText(entry.text).then(() => {
+                    btn.classList.add("ok");
+                    setTimeout(() => btn.classList.remove("ok"), 1300);
+                  }).catch(() => {});
+                }}>
+                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" d="M9 9h10v10H9zM5 15V5h10"/></svg>
+                <span className="act-label">Copy</span>
+              </button>
+              <button className="act-btn" title="Share / copy as quote"
+                onClick={(ev) => {
+                  const btn = ev.currentTarget;
+                  const share = `> ${entry.text.replace(/\n/g, "\n> ")}\n\n— BEAST`;
+                  const done = () => { btn.classList.add("ok"); setTimeout(() => btn.classList.remove("ok"), 1300); };
+                  if (navigator.share) { navigator.share({ text: entry.text }).then(done).catch(() => {}); }
+                  else { navigator.clipboard?.writeText(share).then(done).catch(() => {}); }
+                }}>
+                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"/></svg>
+                <span className="act-label">Share</span>
+              </button>
+              {(entry.elapsedMs || entry.at) && (
+                <span className="act-time" title={fmtClock(entry.at)}>
+                  {entry.elapsedMs ? fmtDuration(entry.elapsedMs) : fmtClock(entry.at)}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
