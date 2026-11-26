@@ -914,6 +914,24 @@ async def ws_endpoint(ws: WebSocket):
                     await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
                     await ws.send_json({"type": "chat_history", "target": active_session.get("target") or "", "entries": active_entries, "session": active_session["id"]})
                     await _send_findings()
+            elif mtype == "attach_current_to_program":
+                # Attach the CURRENT (e.g. fresh) chat to a program + asset — the
+                # conversation stays; it just gains that engagement's scope.
+                tgt = str(msg.get("target", "")).strip()
+                prog = str(msg.get("program", "")).strip()
+                if tgt:
+                    active_session["target"] = tgt
+                    _sync_agent_target(tgt)
+                    if prog:
+                        try:
+                            from hellhound.core.tasks import attach_target_to_program
+                            attach_target_to_program(agent.target, prog)
+                        except Exception as _e:
+                            print(f"[!] attach_target_to_program failed: {_e}")
+                    _save_session(active_session)
+                    await ws.send_json({"type": "targets", "list": _list_targets()})
+                    await ws.send_json({"type": "sessions", "list": _list_sessions(), "active": active_session["id"]})
+                    await _send_findings()
             elif mtype == "switch_session":
                 s = _load_session(str(msg.get("id", "")).strip())
                 if s:

@@ -609,6 +609,64 @@
   font-family: ui-monospace, monospace;
 }
 
+/* "Attach this chat to a program" (from the empty state) */
+.empty-attach { margin-top: 14px; }
+.attach-open-btn {
+  background: transparent;
+  border: 1px dashed #4a4538;
+  color: var(--muted, #9aa0a8);
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+}
+.attach-open-btn:hover { border-color: #ff8a5c; color: #ff8a5c; }
+.attach-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--panel-2, #16140f);
+  border: 1px solid var(--border, #322f25);
+  border-radius: 10px;
+  padding: 12px;
+}
+.attach-panel select,
+.attach-panel input {
+  background: #1a1a1a;
+  border: 1px solid #3a3730;
+  color: var(--text, #e6e8eb);
+  border-radius: 7px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 12.5px;
+}
+.attach-panel select:focus,
+.attach-panel input:focus { outline: none; border-color: #ff8a5c; }
+.attach-actions { display: flex; gap: 8px; }
+.attach-go {
+  flex: 1;
+  background: #ff6a3d;
+  color: #13120e;
+  border: none;
+  border-radius: 7px;
+  padding: 8px;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+}
+.attach-go:disabled { opacity: 0.4; cursor: default; }
+.attach-cancel {
+  background: transparent;
+  border: 1px solid var(--border, #322f25);
+  color: var(--muted, #9aa0a8);
+  border-radius: 7px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+}
+
 /* ── Chat Row & Bubble Styling ─────────────────────────────────── */
 .chat-row {
   display: flex;

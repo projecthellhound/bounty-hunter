@@ -196,6 +196,9 @@ export default function App() {
   const [activeSession, setActiveSession] = useState<string>("");
   const [addingProgram, setAddingProgram] = useState<string>(""); // program name whose "+ asset" input is open
   const [addAsset, setAddAsset] = useState<string>("");
+  const [attachOpen, setAttachOpen] = useState<boolean>(false); // "attach this chat to a program" panel
+  const [attachProgram, setAttachProgram] = useState<string>("");
+  const [attachTarget, setAttachTarget] = useState<string>("");
   const [scope, setScope] = useState<Scope>({ kind: "target", name: "default" });
   const [navView, setNavView] = useState<"chat" | "graph">("chat");
   const [input, setInput] = useState("");
@@ -453,6 +456,17 @@ export default function App() {
     setAddAsset("");
   }, [addAsset]);
 
+  // Attach the CURRENT chat to a chosen program + asset (from the empty state).
+  const attachCurrentToProgram = useCallback(() => {
+    const asset = attachTarget.trim();
+    if (asset) {
+      wsRef.current?.send(JSON.stringify({ type: "attach_current_to_program", target: asset, program: attachProgram }));
+    }
+    setAttachOpen(false);
+    setAttachTarget("");
+    setAttachProgram("");
+  }, [attachTarget, attachProgram]);
+
   const sortedFindings = [...findings].sort(
     (a, b) => (SEV_ORDER[a.severity] ?? 5) - (SEV_ORDER[b.severity] ?? 5) || a.id - b.id
   );
@@ -695,6 +709,36 @@ export default function App() {
                   <code>what did we find so far?</code>
                 </button>
               </div>
+              {!hasTarget && (
+                <div className="empty-attach">
+                  {!attachOpen ? (
+                    <button className="attach-open-btn" onClick={() => { setAttachOpen(true); setAttachProgram(programs[0]?.name || ""); }}>
+                      ⛓ Attach this chat to a program
+                    </button>
+                  ) : (
+                    <div className="attach-panel">
+                      <select value={attachProgram} onChange={(e) => setAttachProgram(e.target.value)}>
+                        <option value="">No program — just this target</option>
+                        {programs.map((p) => <option key={p.name} value={p.name}>{p.display_name}</option>)}
+                      </select>
+                      <input
+                        autoFocus
+                        value={attachTarget}
+                        placeholder="target domain, e.g. app.example.com"
+                        onChange={(e) => setAttachTarget(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") { e.preventDefault(); attachCurrentToProgram(); }
+                          if (e.key === "Escape") setAttachOpen(false);
+                        }}
+                      />
+                      <div className="attach-actions">
+                        <button className="attach-go" disabled={!attachTarget.trim()} onClick={attachCurrentToProgram}>Attach & start</button>
+                        <button className="attach-cancel" onClick={() => setAttachOpen(false)}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
