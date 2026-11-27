@@ -1826,6 +1826,86 @@
   border-radius: 8px;
 }
 
+/* ── Settings → Setup / Doctor tab ─────────────────────────────── */
+.doctor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.doctor-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.doctor-stat-label {
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.doctor-stat-val {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+}
+.doctor-stat-val.ok { color: #3dd68c; }
+.doctor-stat-val.warn { color: var(--red); }
+.doctor-stat-val.off { color: var(--faint); }
+.doctor-section-title {
+  font-size: 10.5px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-top: 4px;
+}
+.doctor-missing { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip.warn-chip { color: var(--red); border-color: var(--red-dim); }
+.doctor-install {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.doctor-install code {
+  flex: 1;
+  color: var(--text-dim);
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.copy-mini {
+  flex: none;
+  background: #1f1f1f;
+  border: 1px solid #333;
+  color: #c7ccd3;
+  font-size: 10.5px;
+  padding: 3px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.copy-mini:hover { color: #fff; border-color: #444; }
+.doctor-allgood { color: #3dd68c; font-size: 13px; }
+.ghost-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 7px;
+  padding: 7px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ghost-btn:hover:not(:disabled) { color: var(--text); border-color: #3a3a3a; }
+.ghost-btn:disabled { opacity: 0.5; cursor: default; }
+
 /* ── keyboard shortcuts modal ──────────────────────────────────── */
 .shortcuts-modal {
   width: 500px;

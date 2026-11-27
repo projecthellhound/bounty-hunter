@@ -1668,7 +1668,7 @@ interface ToolKey {
   hint: string;
 }
 
-const SETTINGS_TABS = ["models", "llm-keys", "tool-keys", "profile", "behavior"] as const;
+const SETTINGS_TABS = ["models", "llm-keys", "tool-keys", "profile", "behavior", "doctor"] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number];
 const SETTINGS_TAB_LABELS: Record<SettingsTab, string> = {
   "models": "Models",
@@ -1676,7 +1676,18 @@ const SETTINGS_TAB_LABELS: Record<SettingsTab, string> = {
   "tool-keys": "Recon Tool Keys",
   "profile": "Handle & Headers",
   "behavior": "Behavior",
+  "doctor": "Setup",
 };
+
+interface DoctorData {
+  python: string;
+  tools: { installed_count: number; total: number; missing: string[]; install_cmd: string; by_tool: Record<string, { available: boolean; type: string; install: string }>; error?: string };
+  providers: Record<string, boolean>;
+  orchestrator: { provider: string; model: string };
+  synthesizer: { provider: string; model: string };
+  ollama: boolean;
+  models_count: number;
+}
 
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const [cfg, setCfg] = useState<Config | null>(null);
@@ -1692,6 +1703,14 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [headers, setHeaders] = useState<Record<string, string>>({});
   const [newHeaderName, setNewHeaderName] = useState("");
   const [newHeaderValue, setNewHeaderValue] = useState("");
+
+  const [doctor, setDoctor] = useState<DoctorData | null>(null);
+  const [doctorLoading, setDoctorLoading] = useState(false);
+  const refreshDoctor = () => {
+    setDoctorLoading(true);
+    fetch(`${API}/api/doctor`).then((r) => r.json()).then(setDoctor).catch(() => setDoctor(null)).finally(() => setDoctorLoading(false));
+  };
+  useEffect(() => { if (tab === "doctor" && !doctor) refreshDoctor(); }, [tab]); // lazy-load on first open
 
   useEffect(() => {
     fetch(`${API}/api/config`).then((r) => r.json()).then(setCfg).catch(() => setCfg(null));
@@ -1868,9 +1887,76 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
               <label className="check"><input type="checkbox" checked={cfg.show_recaps} onChange={(e) => patch({ show_recaps: e.target.checked })} /> Show recaps</label>
             </>
           )}
+
+          {tab === "doctor" && (
+            <>
+              <p className="settings-hint">A quick health check of your setup — no terminal needed.</p>
+              {doctorLoading && !doctor && <div className="empty">checking…</div>}
+              {doctor && (
+                <>
+                  <div className="doctor-grid">
+                    <div className="doctor-stat">
+                      <span className="doctor-stat-label">Recon tools</span>
+                      <span className={`doctor-stat-val ${doctor.tools.missing.length === 0 ? "ok" : "warn"}`}>
+                        {doctor.tools.installed_count}/{doctor.tools.total}
+                      </span>
+                    </div>
+                    <div className="doctor-stat">
+                      <span className="doctor-stat-label">Local AI (Ollama)</span>
+                      <span className={`doctor-stat-val ${doctor.ollama ? "ok" : "off"}`}>{doctor.ollama ? "reachable" : "off"}</span>
+                    </div>
+                    <div className="doctor-stat">
+                      <span className="doctor-stat-label">Models available</span>
+                      <span className="doctor-stat-val">{doctor.models_count}</span>
+                    </div>
+                    <div className="doctor-stat">
+                      <span className="doctor-stat-label">Python</span>
+                      <span className="doctor-stat-val">{doctor.python}</span>
+                    </div>
+                  </div>
+
+                  <div className="doctor-section-title">AI providers</div>
+                  <div className="key-status">
+                    {Object.entries(doctor.providers).map(([p, on]) => (
+                      <span key={p} className={`chip ${on ? "on" : ""}`}>{p}{on ? " ✓" : ""}</span>
+                    ))}
+                  </div>
+                  <p className="settings-hint">
+                    Orchestrator: <code>{doctor.orchestrator.provider} · {doctor.orchestrator.model || "—"}</code>
+                  </p>
+
+                  {doctor.tools.missing.length > 0 ? (
+                    <>
+                      <div className="doctor-section-title">Missing tools ({doctor.tools.missing.length})</div>
+                      <div className="doctor-missing">
+                        {doctor.tools.missing.map((t) => (
+                          <span key={t} className="chip warn-chip">{t}</span>
+                        ))}
+                      </div>
+                      {doctor.tools.install_cmd && (
+                        <div className="doctor-install">
+                          <code>{doctor.tools.install_cmd}</code>
+                          <button className="copy-mini" onClick={(e) => {
+                            const b = e.currentTarget;
+                            navigator.clipboard?.writeText(doctor.tools.install_cmd).then(() => { b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1200); }).catch(() => {});
+                          }}>Copy</button>
+                        </div>
+                      )}
+                      <p className="settings-hint">Or enable <b>Auto-install missing tools</b> in Behavior to install them on demand.</p>
+                    </>
+                  ) : (
+                    <p className="doctor-allgood">✓ All {doctor.tools.total} recon tools installed.</p>
+                  )}
+                </>
+              )}
+            </>
+          )}
         </div>
         <div className="modal-foot">
           <span className="saved">{saved}</span>
+          {tab === "doctor" && (
+            <button className="ghost-btn" onClick={refreshDoctor} disabled={doctorLoading}>{doctorLoading ? "Checking…" : "Re-check"}</button>
+          )}
           {(tab === "models" || tab === "profile" || tab === "behavior") && (
             <button className="primary" onClick={saveConfig} disabled={!cfg}>Save</button>
           )}
