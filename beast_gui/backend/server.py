@@ -279,6 +279,54 @@ def get_models():
         return {"models": [], "error": str(exc)}
 
 
+@app.get("/api/doctor")
+def get_doctor():
+    """Environment health for the Settings → Setup tab: recon-tool install status
+    (with per-tool install hints), the active model/provider wiring, local-AI
+    (Ollama) reachability, and Python version — the same picture `/setup` shows
+    in the terminal, as data the GUI can render as buttons/badges."""
+    import platform
+    from hellhound.core.ai_utils import load_config
+
+    cfg = load_config()
+    out: dict = {"python": platform.python_version()}
+
+    try:
+        from hellhound.core.toolcheck import check_all_tools
+        t = check_all_tools()
+        out["tools"] = {
+            "installed_count": t.get("installed_count", 0),
+            "total": t.get("total_tools", 0),
+            "missing": sorted((t.get("missing_pd", []) or []) + (t.get("missing_other", []) or [])),
+            "install_cmd": t.get("combined_pd_install", ""),
+            # per-tool: name -> {available, type, install}
+            "by_tool": {
+                name: {"available": bool(info.get("available")), "type": info.get("type", ""), "install": info.get("install", "")}
+                for name, info in (t.get("tools", {}) or {}).items()
+            },
+        }
+    except Exception as exc:
+        out["tools"] = {"error": str(exc), "installed_count": 0, "total": 0, "missing": [], "by_tool": {}}
+
+    api_keys = cfg.get("api_keys", {}) or {}
+    out["providers"] = {p: (p == "ollama" or bool(api_keys.get(p))) for p in KNOWN_PROVIDERS}
+    out["orchestrator"] = {"provider": cfg.get("orchestrator_provider", ""), "model": cfg.get("orchestrator_model", "")}
+    out["synthesizer"] = {"provider": cfg.get("synthesizer_provider", ""), "model": cfg.get("synthesizer_model", "")}
+
+    try:
+        from hellhound.core.ai_utils import ping_ollama
+        out["ollama"] = bool(ping_ollama())
+    except Exception:
+        out["ollama"] = False
+    try:
+        from hellhound.core.ai_utils import list_available_models
+        out["models_count"] = len(list_available_models())
+    except Exception:
+        out["models_count"] = 0
+
+    return out
+
+
 # ── targets / findings / reports ──────────────────────────────────────────
 def _list_targets():
     """list_targets(exclude_default=True) also drops every dotless name
@@ -1334,8 +1382,17 @@ def run_desktop(title: str = "BEAST") -> bool:
     except Exception:
         storage_path = None
     webview.start(private_mode=False, storage_path=storage_path)  # blocks until the window is closed
+
+    # Window closed = app quit. Stop the server + Brain subprocess, then hard-exit:
+    # after the GTK/WebKit window tears down, the process hangs on native
+    # resources even though no Python non-daemon threads remain, so a normal
+    # return would leave `beast --gui` stuck instead of returning the shell.
     server.should_exit = True
-    return True
+    try:
+        _stop_brain()
+    except Exception:
+        pass
+    os._exit(0)
 
 
 if __name__ == "__main__":
