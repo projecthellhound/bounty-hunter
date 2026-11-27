@@ -885,24 +885,57 @@
 .assistant-body.md pre { white-space: pre; }
 
 /* Copy buttons (code blocks + whole message) */
-.code-block-wrap { position: relative; }
+.code-block-wrap {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 10px;
+  background: #141414;
+  border-bottom: 1px solid var(--border);
+}
+.code-lang {
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+  text-transform: lowercase;
+}
+.code-actions {
+  display: flex;
+  gap: 4px;
+}
+.code-wrap-btn,
 .code-copy {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  background: #222;
-  border: 1px solid #3a3a3a;
+  background: #1f1f1f;
+  border: 1px solid #333;
   color: #c7ccd3;
   font-size: 10.5px;
-  padding: 2px 8px;
+  padding: 2px 9px;
   border-radius: 5px;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.12s;
   font-family: inherit;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
 }
-.code-block-wrap:hover .code-copy { opacity: 1; }
-.code-copy.copied { background: #1f3d2a; border-color: #2f6b41; color: #8fe0a6; opacity: 1; }
+.code-wrap-btn:hover,
+.code-copy:hover { color: #fff; border-color: #444; }
+.code-wrap-btn.on { color: var(--text); border-color: #555; background: #2a2a2a; }
+.code-copy.copied { background: #1f3d2a; border-color: #2f6b41; color: #8fe0a6; }
+/* the <pre> sits flush inside the bordered wrap now */
+.code-block-wrap pre {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+}
+.code-block-wrap pre.wrap code {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 /* Hover action bar under an AI reply (copy · share · time) */
 .msg-actions {
   display: flex;

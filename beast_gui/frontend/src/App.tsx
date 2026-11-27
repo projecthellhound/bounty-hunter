@@ -130,26 +130,48 @@ function resultPreview(result: unknown): string {
 function renderMd(text: string): { __html: string } {
   try {
     let html = marked.parse(text) as string;
-    // Wrap every code block with a Copy button (handled via delegation below).
+    // Give every code block a header bar: language label + Wrap + Copy
+    // (buttons handled via delegation in handleCodeClick below).
     html = html
-      .replace(/<pre>/g, '<div class="code-block-wrap"><button class="code-copy" type="button">Copy</button><pre>')
-      .replace(/<\/pre>/g, "</pre></div>");
+      .replace(/<pre><code([^>]*)>/g, (_m, attrs: string) => {
+        const lm = /language-([\w+#.-]+)/.exec(attrs);
+        const lang = lm ? lm[1] : "text";
+        return (
+          '<div class="code-block-wrap"><div class="code-head">' +
+          `<span class="code-lang">${lang}</span>` +
+          '<span class="code-actions">' +
+          '<button class="code-wrap-btn" type="button" title="Toggle word wrap">Wrap</button>' +
+          '<button class="code-copy" type="button">Copy</button>' +
+          `</span></div><pre><code${attrs}>`
+        );
+      })
+      .replace(/<\/code><\/pre>/g, "</code></pre></div>");
     return { __html: html };
   } catch { return { __html: text }; }
 }
 
-// Delegated copy for code blocks: clicking a .code-copy copies its <pre> text.
-function handleCodeCopy(e: React.MouseEvent) {
-  const btn = (e.target as HTMLElement).closest(".code-copy") as HTMLElement | null;
-  if (!btn) return;
-  const pre = btn.parentElement?.querySelector("pre");
-  if (!pre) return;
-  navigator.clipboard?.writeText(pre.textContent || "").then(() => {
-    const orig = btn.textContent;
-    btn.textContent = "Copied";
-    btn.classList.add("copied");
-    setTimeout(() => { btn.textContent = orig; btn.classList.remove("copied"); }, 1300);
-  }).catch(() => {});
+// Delegated clicks for code-block controls: Copy copies the <pre> text; Wrap
+// toggles soft-wrapping on long lines.
+function handleCodeClick(e: React.MouseEvent) {
+  const target = e.target as HTMLElement;
+  const copyBtn = target.closest(".code-copy") as HTMLElement | null;
+  if (copyBtn) {
+    const pre = copyBtn.closest(".code-block-wrap")?.querySelector("pre");
+    if (!pre) return;
+    navigator.clipboard?.writeText(pre.textContent || "").then(() => {
+      const orig = copyBtn.textContent;
+      copyBtn.textContent = "Copied";
+      copyBtn.classList.add("copied");
+      setTimeout(() => { copyBtn.textContent = orig; copyBtn.classList.remove("copied"); }, 1300);
+    }).catch(() => {});
+    return;
+  }
+  const wrapBtn = target.closest(".code-wrap-btn") as HTMLElement | null;
+  if (wrapBtn) {
+    const pre = wrapBtn.closest(".code-block-wrap")?.querySelector("pre");
+    pre?.classList.toggle("wrap");
+    wrapBtn.classList.toggle("on");
+  }
 }
 
 // The registrable ("apex") domain of a host, so subdomains of one site group
@@ -1388,7 +1410,7 @@ function EntryRow({ entry, isLastAssistant, userIndex, onRegenerate, onEdit }: {
           <div className="assistant-header">
             <span className="assistant-name">BEAST</span>
           </div>
-          <div className="assistant-body md" onClick={handleCodeCopy} dangerouslySetInnerHTML={renderMd(entry.text)} />
+          <div className="assistant-body md" onClick={handleCodeClick} dangerouslySetInnerHTML={renderMd(entry.text)} />
           {entry.streaming && <span className="stream-caret" />}
           {!entry.streaming && entry.text && (
             <div className="msg-actions">
