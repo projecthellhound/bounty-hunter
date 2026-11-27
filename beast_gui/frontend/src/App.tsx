@@ -861,10 +861,10 @@ export default function App() {
           <div className="rail-collapsed-actions">
             <button
               className="collapsed-icon-btn"
-              title="Expand sidebar"
-              onClick={() => setLeftCollapsed(false)}
+              title="New chat"
+              onClick={newChat}
             >
-              ☰
+              +
             </button>
             <button
               className="collapsed-icon-btn"
@@ -1064,15 +1064,6 @@ export default function App() {
       {/* ── CENTER ─── */}
       <main className="center">
         <header className="topbar">
-          {leftCollapsed && (
-            <button
-              className="topbar-toggle-btn"
-              title="Expand sidebar"
-              onClick={() => setLeftCollapsed(false)}
-            >
-              ☰
-            </button>
-          )}
           <div className="tb-target">
             <span className={`target-badge ${hasTarget ? "" : "unset"}`}>{hasTarget ? activeTarget : "No target yet"}</span>
             {scope.kind === "program" && (

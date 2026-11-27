@@ -1283,6 +1283,18 @@ def run_desktop(title: str = "BEAST") -> bool:
     backend requires it). Returns False if no native webview backend is
     available, so the caller can fall back to opening a browser.
     """
+    # WebKitGTK (the Linux desktop engine) paints a BLACK/blank window when its
+    # accelerated-compositing / DMABUF path can't acquire a GL context — common
+    # on VMs, headless or passthrough GPUs, and some drivers. (A browser like
+    # Firefox still works because it falls back to software rendering on its
+    # own.) Force WebKit onto its software path so the window actually paints.
+    # setdefault: never override a value the user deliberately set.
+    import os
+    import sys
+    if sys.platform.startswith("linux"):
+        os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+        os.environ.setdefault("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
+
     _dump_tools_feed()
     _ensure_brain_running()
     try:
