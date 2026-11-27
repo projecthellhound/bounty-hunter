@@ -1322,7 +1322,18 @@ def run_desktop(title: str = "BEAST") -> bool:
         height=820,
         min_size=(900, 600),
     )
-    webview.start()  # blocks until the window is closed
+
+    # private_mode defaults to True, which disables Web Storage in WebKit — then
+    # localStorage THROWS (not just returns null), and the app reads it during
+    # its first render (panel widths, zoom, remembered layout) so the whole UI
+    # crashes to a blank window. Turn it off and give it a real storage dir, so
+    # localStorage works AND those preferences persist across restarts.
+    storage_path = os.path.join(os.path.expanduser("~"), ".beast", "gui_webview")
+    try:
+        os.makedirs(storage_path, exist_ok=True)
+    except Exception:
+        storage_path = None
+    webview.start(private_mode=False, storage_path=storage_path)  # blocks until the window is closed
     server.should_exit = True
     return True
 

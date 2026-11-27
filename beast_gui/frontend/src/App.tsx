@@ -7,6 +7,23 @@ import logo from "./logo.png";
 import Brain from "./graph/Brain";
 import "./App.css";
 
+// localStorage can THROW (not just return null) in storage-disabled contexts —
+// e.g. a WebKit private-mode window, or a browser with site data blocked. The
+// app reads it during its first render (panel widths, zoom, layout), so an
+// unguarded access white-screens the whole UI. Route everything through this
+// so a missing store degrades to defaults instead of crashing.
+const LS = {
+  get(k: string): string | null {
+    try { return localStorage.getItem(k); } catch { return null; }
+  },
+  set(k: string, v: string): void {
+    try { localStorage.setItem(k, v); } catch { /* storage unavailable */ }
+  },
+  remove(k: string): void {
+    try { localStorage.removeItem(k); } catch { /* storage unavailable */ }
+  },
+};
+
 // marked + syntax highlighting for fenced code blocks (payloads, requests, JSON).
 const marked = new Marked(
   markedHighlight({
@@ -267,19 +284,19 @@ export default function App() {
   const [attachProgram, setAttachProgram] = useState<string>("");
   const [attachTarget, setAttachTarget] = useState<string>("");
   const [scope, setScope] = useState<Scope>({ kind: "target", name: "default" });
-  const [navView, setNavView] = useState<"chat" | "graph">(() => (localStorage.getItem("beast.navView") === "graph" ? "graph" : "chat"));
+  const [navView, setNavView] = useState<"chat" | "graph">(() => (LS.get("beast.navView") === "graph" ? "graph" : "chat"));
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
   const [statusLabel, setStatusLabel] = useState("");
   // Remembered layout — panel open/closed state persists across restarts.
-  const [leftCollapsed, setLeftCollapsed] = useState(() => localStorage.getItem("beast.leftCollapsed") === "1");
-  const [rightCollapsed, setRightCollapsed] = useState(() => localStorage.getItem("beast.rightCollapsed") !== "0");
+  const [leftCollapsed, setLeftCollapsed] = useState(() => LS.get("beast.leftCollapsed") === "1");
+  const [rightCollapsed, setRightCollapsed] = useState(() => LS.get("beast.rightCollapsed") !== "0");
   // UI zoom (Ctrl +/-/0) — whole-app scale, remembered across restarts.
-  const [uiScale, setUiScale] = useState<number>(() => { const v = Number(localStorage.getItem("beast.uiScale")); return v >= 0.7 && v <= 1.6 ? v : 1; });
+  const [uiScale, setUiScale] = useState<number>(() => { const v = Number(LS.get("beast.uiScale")); return v >= 0.7 && v <= 1.6 ? v : 1; });
   // Resizable side panels — widths persist across restarts.
-  const [leftW, setLeftW] = useState<number>(() => { const v = Number(localStorage.getItem("beast.leftW")); return v >= 180 && v <= 460 ? v : 248; });
-  const [rightW, setRightW] = useState<number>(() => { const v = Number(localStorage.getItem("beast.rightW")); return v >= 240 && v <= 560 ? v : 324; });
+  const [leftW, setLeftW] = useState<number>(() => { const v = Number(LS.get("beast.leftW")); return v >= 180 && v <= 460 ? v : 248; });
+  const [rightW, setRightW] = useState<number>(() => { const v = Number(LS.get("beast.rightW")); return v >= 240 && v <= 560 ? v : 324; });
   const [resizing, setResizing] = useState<null | "left" | "right">(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [report, setReport] = useState<{ title: string; file: string; target: string } | null>(null);
@@ -620,16 +637,16 @@ export default function App() {
   // so on a switch it runs first and no-ops on the mismatch.
   useEffect(() => {
     if (activeSession && activeSession === draftSessionRef.current) {
-      try { localStorage.setItem(`beast.draft.${activeSession}`, input); } catch {}
+      try { LS.set(`beast.draft.${activeSession}`, input); } catch {}
     }
   }, [input, activeSession]);
   // Load on switch: persist the outgoing chat's text, then swap in the incoming
   // chat's saved draft. `input` here is still the OLD chat's text (not yet reset).
   useEffect(() => {
     if (activeSession === draftSessionRef.current) return;
-    try { if (draftSessionRef.current) localStorage.setItem(`beast.draft.${draftSessionRef.current}`, input); } catch {}
+    try { if (draftSessionRef.current) LS.set(`beast.draft.${draftSessionRef.current}`, input); } catch {}
     draftSessionRef.current = activeSession;
-    try { setInput(localStorage.getItem(`beast.draft.${activeSession}`) || ""); } catch { setInput(""); }
+    try { setInput(LS.get(`beast.draft.${activeSession}`) || ""); } catch { setInput(""); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSession]);
 
@@ -668,11 +685,11 @@ export default function App() {
   // Apply + persist UI zoom (whole-app scale) and the remembered layout.
   useEffect(() => {
     (document.documentElement.style as any).zoom = String(uiScale);
-    localStorage.setItem("beast.uiScale", String(uiScale));
+    LS.set("beast.uiScale", String(uiScale));
   }, [uiScale]);
-  useEffect(() => { localStorage.setItem("beast.leftCollapsed", leftCollapsed ? "1" : "0"); }, [leftCollapsed]);
-  useEffect(() => { localStorage.setItem("beast.rightCollapsed", rightCollapsed ? "1" : "0"); }, [rightCollapsed]);
-  useEffect(() => { localStorage.setItem("beast.navView", navView); }, [navView]);
+  useEffect(() => { LS.set("beast.leftCollapsed", leftCollapsed ? "1" : "0"); }, [leftCollapsed]);
+  useEffect(() => { LS.set("beast.rightCollapsed", rightCollapsed ? "1" : "0"); }, [rightCollapsed]);
+  useEffect(() => { LS.set("beast.navView", navView); }, [navView]);
 
   // Find-in-chat: recompute matching message rows when the query, the
   // transcript, or the bar's open state changes. Highlights hits at the DOM
@@ -775,8 +792,8 @@ export default function App() {
     window.addEventListener("mouseup", onUp);
     return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
   }, [resizing]);
-  useEffect(() => { localStorage.setItem("beast.leftW", String(leftW)); }, [leftW]);
-  useEffect(() => { localStorage.setItem("beast.rightW", String(rightW)); }, [rightW]);
+  useEffect(() => { LS.set("beast.leftW", String(leftW)); }, [leftW]);
+  useEffect(() => { LS.set("beast.rightW", String(rightW)); }, [rightW]);
 
   const sortedFindings = [...findings].sort(
     (a, b) => (SEV_ORDER[a.severity] ?? 5) - (SEV_ORDER[b.severity] ?? 5) || a.id - b.id
