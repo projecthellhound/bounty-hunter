@@ -291,6 +291,13 @@ export default function App() {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteIdx, setPaletteIdx] = useState(0);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // Find-in-chat: search within the open conversation (vs. the sidebar's
+  // across-chats search). Highlights matching message rows and jumps between them.
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findCursor, setFindCursor] = useState(0);
+  const [findCount, setFindCount] = useState(0);
+  const findMatchesRef = useRef<HTMLElement[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
@@ -634,6 +641,7 @@ export default function App() {
       if (e.key === "Escape") {
         if (shortcutsOpen) { setShortcutsOpen(false); return; }
         if (paletteOpen) { setPaletteOpen(false); return; }
+        if (findOpen) { setFindOpen(false); setFindQuery(""); return; }
         if (busy) { stopTurn(); return; }
         if (settingsOpen) { setSettingsOpen(false); return; }
         if (report) { setReport(null); return; }
@@ -646,6 +654,7 @@ export default function App() {
       if (k === "/" || k === "?") { e.preventDefault(); setShortcutsOpen((v) => !v); }
       else if (k === "k") { e.preventDefault(); setPaletteQuery(""); setPaletteIdx(0); setPaletteOpen((v) => !v); }
       else if (k === "n") { e.preventDefault(); newChat(); }
+      else if (k === "f" && e.shiftKey) { e.preventDefault(); setFindOpen(true); }
       else if (k === "f") { e.preventDefault(); setSearchOpen(true); }
       else if (k === "b") { e.preventDefault(); setLeftCollapsed((v) => !v); }
       else if (k === "=" || k === "+") { e.preventDefault(); setUiScale((s) => Math.min(1.6, Math.round((s + 0.1) * 10) / 10)); }
@@ -654,7 +663,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [busy, settingsOpen, report, attachOpen, searchOpen, paletteOpen, shortcutsOpen, stopTurn, newChat]);
+  }, [busy, settingsOpen, report, attachOpen, searchOpen, paletteOpen, shortcutsOpen, findOpen, stopTurn, newChat]);
 
   // Apply + persist UI zoom (whole-app scale) and the remembered layout.
   useEffect(() => {
@@ -664,6 +673,41 @@ export default function App() {
   useEffect(() => { localStorage.setItem("beast.leftCollapsed", leftCollapsed ? "1" : "0"); }, [leftCollapsed]);
   useEffect(() => { localStorage.setItem("beast.rightCollapsed", rightCollapsed ? "1" : "0"); }, [rightCollapsed]);
   useEffect(() => { localStorage.setItem("beast.navView", navView); }, [navView]);
+
+  // Find-in-chat: recompute matching message rows when the query, the
+  // transcript, or the bar's open state changes. Highlights hits at the DOM
+  // level (the assistant bodies are dangerouslySetInnerHTML, so row-level
+  // marking is the clean way) and resets to the first match.
+  useEffect(() => {
+    const log = logRef.current;
+    if (!log) return;
+    log.querySelectorAll(".find-hit, .find-current").forEach((el) => el.classList.remove("find-hit", "find-current"));
+    const q = findOpen ? findQuery.trim().toLowerCase() : "";
+    if (!q) { findMatchesRef.current = []; setFindCount(0); setFindCursor(0); return; }
+    const hits = ([...log.querySelectorAll(".chat-row")] as HTMLElement[]).filter(
+      (r) => (r.textContent || "").toLowerCase().includes(q)
+    );
+    hits.forEach((r) => r.classList.add("find-hit"));
+    findMatchesRef.current = hits;
+    setFindCount(hits.length);
+    setFindCursor(0);
+  }, [findQuery, findOpen, entries]);
+
+  // Move the "current match" marker + scroll it into view as the cursor moves.
+  useEffect(() => {
+    const hits = findMatchesRef.current;
+    hits.forEach((h) => h.classList.remove("find-current"));
+    const cur = hits[findCursor];
+    if (cur) { cur.classList.add("find-current"); cur.scrollIntoView({ block: "center", behavior: "smooth" }); }
+  }, [findCursor, findCount]);
+
+  const findStep = useCallback((dir: 1 | -1) => {
+    setFindCursor((c) => {
+      const n = findMatchesRef.current.length;
+      if (n === 0) return 0;
+      return (c + dir + n) % n;
+    });
+  }, []);
 
   // Add a new asset under a program and open a chat scoped to it.
   const addToProgram = useCallback((program: string) => {
@@ -1046,6 +1090,10 @@ export default function App() {
                 ⛓ Attach
               </button>
             )}
+            <button className={`tb-find-btn ${findOpen ? "active" : ""}`} title="Find in this chat (Ctrl+Shift+F)"
+              onClick={() => setFindOpen((v) => !v)}>
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2"/><path stroke="currentColor" strokeWidth="2" strokeLinecap="round" d="M21 21l-4-4"/></svg>
+            </button>
             <button className="tb-clear-btn" title="Clear chat for this target" onClick={clearChat}>
               clear chat
             </button>
@@ -1099,6 +1147,26 @@ export default function App() {
           />
         ) : (
         <>
+        {findOpen && (
+          <div className="find-bar">
+            <svg className="find-ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2"/><path stroke="currentColor" strokeWidth="2" strokeLinecap="round" d="M21 21l-4-4"/></svg>
+            <input
+              className="find-input"
+              autoFocus
+              placeholder="Find in this chat…"
+              value={findQuery}
+              onChange={(e) => setFindQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); findStep(e.shiftKey ? -1 : 1); }
+                else if (e.key === "Escape") { e.preventDefault(); setFindOpen(false); setFindQuery(""); }
+              }}
+            />
+            <span className="find-count">{findCount ? `${findCursor + 1}/${findCount}` : (findQuery.trim() ? "0" : "")}</span>
+            <button className="find-nav" title="Previous (Shift+Enter)" disabled={!findCount} onClick={() => findStep(-1)}>↑</button>
+            <button className="find-nav" title="Next (Enter)" disabled={!findCount} onClick={() => findStep(1)}>↓</button>
+            <button className="find-nav" title="Close (Esc)" onClick={() => { setFindOpen(false); setFindQuery(""); }}>✕</button>
+          </div>
+        )}
         <div className="log" ref={logRef} onScroll={handleLogScroll}>
           {entries.length === 0 && (
             <div className="chat-empty-state">
@@ -1494,6 +1562,7 @@ function ShortcutsModal({ onClose }: { onClose: () => void }) {
         [[mod, "K"], "Command palette — jump to any chat, target, or command"],
         [[mod, "N"], "New chat"],
         [[mod, "F"], "Search your chats"],
+        [[mod, "Shift", "F"], "Find in the current chat"],
         [[mod, "B"], "Show / hide the left sidebar"],
       ],
     },
