@@ -268,6 +268,7 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteIdx, setPaletteIdx] = useState(0);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
@@ -609,6 +610,7 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (shortcutsOpen) { setShortcutsOpen(false); return; }
         if (paletteOpen) { setPaletteOpen(false); return; }
         if (busy) { stopTurn(); return; }
         if (settingsOpen) { setSettingsOpen(false); return; }
@@ -619,7 +621,8 @@ export default function App() {
       }
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       const k = e.key.toLowerCase();
-      if (k === "k") { e.preventDefault(); setPaletteQuery(""); setPaletteIdx(0); setPaletteOpen((v) => !v); }
+      if (k === "/" || k === "?") { e.preventDefault(); setShortcutsOpen((v) => !v); }
+      else if (k === "k") { e.preventDefault(); setPaletteQuery(""); setPaletteIdx(0); setPaletteOpen((v) => !v); }
       else if (k === "n") { e.preventDefault(); newChat(); }
       else if (k === "f") { e.preventDefault(); setSearchOpen(true); }
       else if (k === "b") { e.preventDefault(); setLeftCollapsed((v) => !v); }
@@ -629,7 +632,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [busy, settingsOpen, report, attachOpen, searchOpen, paletteOpen, stopTurn, newChat]);
+  }, [busy, settingsOpen, report, attachOpen, searchOpen, paletteOpen, shortcutsOpen, stopTurn, newChat]);
 
   // Apply + persist UI zoom (whole-app scale) and the remembered layout.
   useEffect(() => {
@@ -828,6 +831,10 @@ export default function App() {
               <button className="nav-item" onClick={() => setSettingsOpen(true)} title="Settings & API keys">
                 <svg className="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" strokeWidth="2"/><path fill="none" stroke="currentColor" strokeWidth="1.6" d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
                 <span>Settings</span>
+              </button>
+              <button className="nav-item" onClick={() => setShortcutsOpen(true)} title="Keyboard shortcuts (Ctrl+/)">
+                <svg className="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8"/><path stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" d="M6 9.5h0M9 9.5h0M12 9.5h0M15 9.5h0M18 9.5h0M6 12.5h0M9 12.5h0M12 12.5h0M15 12.5h0M18 12.5h0M8 15.5h8"/></svg>
+                <span>Shortcuts</span>
               </button>
             </nav>
             <div className="rail-section-title chats-head">
@@ -1276,6 +1283,7 @@ export default function App() {
       </aside>
 
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
       {report && (
         <ReportModal
           title={report.title}
@@ -1450,6 +1458,67 @@ function ToolCardView({ card }: { card: ToolCard }) {
         <span className="tool-caret">{open ? "▾" : "▸"}</span>
       </button>
       {open && card.done && <pre className="tool-result">{preview.slice(0, 25000)}</pre>}
+    </div>
+  );
+}
+
+function ShortcutsModal({ onClose }: { onClose: () => void }) {
+  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+  const mod = isMac ? "⌘" : "Ctrl";
+  const groups: { title: string; items: [string[], string][] }[] = [
+    {
+      title: "Chats & navigation",
+      items: [
+        [[mod, "K"], "Command palette — jump to any chat, target, or command"],
+        [[mod, "N"], "New chat"],
+        [[mod, "F"], "Search your chats"],
+        [[mod, "B"], "Show / hide the left sidebar"],
+      ],
+    },
+    {
+      title: "View",
+      items: [
+        [[mod, "="], "Zoom in"],
+        [[mod, "−"], "Zoom out"],
+        [[mod, "0"], "Reset zoom"],
+        [[mod, "/"], "This shortcuts list"],
+      ],
+    },
+    {
+      title: "Composer & turns",
+      items: [
+        [["Enter"], "Send message"],
+        [["Shift", "Enter"], "New line"],
+        [["Esc"], "Stop the running turn, or close an open panel"],
+        [["↑", "↓", "Enter"], "Navigate & run items in the command palette"],
+      ],
+    },
+  ];
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal shortcuts-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head"><span>Keyboard shortcuts</span><button onClick={onClose}>✕</button></div>
+        <div className="modal-body">
+          {groups.map((g) => (
+            <div className="sc-group" key={g.title}>
+              <div className="sc-group-title">{g.title}</div>
+              {g.items.map(([keys, desc]) => (
+                <div className="sc-row" key={desc}>
+                  <span className="sc-keys">
+                    {keys.map((k, i) => (
+                      <span key={i}>
+                        <kbd className="kbd">{k}</kbd>
+                        {i < keys.length - 1 && <span className="sc-plus">+</span>}
+                      </span>
+                    ))}
+                  </span>
+                  <span className="sc-desc">{desc}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
