@@ -1668,7 +1668,7 @@ interface ToolKey {
   hint: string;
 }
 
-const SETTINGS_TABS = ["models", "llm-keys", "tool-keys", "profile", "behavior", "doctor"] as const;
+const SETTINGS_TABS = ["models", "llm-keys", "tool-keys", "profile", "behavior", "doctor", "data"] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number];
 const SETTINGS_TAB_LABELS: Record<SettingsTab, string> = {
   "models": "Models",
@@ -1677,6 +1677,7 @@ const SETTINGS_TAB_LABELS: Record<SettingsTab, string> = {
   "profile": "Handle & Headers",
   "behavior": "Behavior",
   "doctor": "Setup",
+  "data": "Data",
 };
 
 interface DoctorData {
@@ -1711,6 +1712,34 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     fetch(`${API}/api/doctor`).then((r) => r.json()).then(setDoctor).catch(() => setDoctor(null)).finally(() => setDoctorLoading(false));
   };
   useEffect(() => { if (tab === "doctor" && !doctor) refreshDoctor(); }, [tab]); // lazy-load on first open
+
+  const [beastInfo, setBeastInfo] = useState<{ path: string; size_mb: number; targets: number; sessions: number } | null>(null);
+  const [importing, setImporting] = useState(false);
+  const refreshInfo = () => fetch(`${API}/api/beast-info`).then((r) => r.json()).then(setBeastInfo).catch(() => {});
+  useEffect(() => { if (tab === "data" && !beastInfo) refreshInfo(); }, [tab]);
+
+  const doExport = () => {
+    // backend sends Content-Disposition: attachment — an anchor click downloads it.
+    const a = document.createElement("a");
+    a.href = `${API}/api/export`;
+    a.download = "";
+    document.body.appendChild(a); a.click(); a.remove();
+    flash("exporting…");
+  };
+  const doImport = async (file: File) => {
+    setImporting(true);
+    try {
+      const buf = await file.arrayBuffer();
+      const r = await fetch(`${API}/api/import`, { method: "POST", body: buf });
+      const d = await r.json();
+      flash(d.status === "success" ? `restored ${d.files} files ✓` : `import failed: ${d.error || "?"}`);
+      refreshInfo();
+    } catch (e) {
+      flash("import failed");
+    } finally {
+      setImporting(false);
+    }
+  };
 
   useEffect(() => {
     fetch(`${API}/api/config`).then((r) => r.json()).then(setCfg).catch(() => setCfg(null));
@@ -1949,6 +1978,29 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                   )}
                 </>
               )}
+            </>
+          )}
+
+          {tab === "data" && (
+            <>
+              <p className="settings-hint">Back up or restore everything Beast knows — targets, chat sessions, findings, config and lessons. Great for moving to another machine or into the Docker volume.</p>
+              {beastInfo && (
+                <div className="doctor-grid">
+                  <div className="doctor-stat"><span className="doctor-stat-label">Backup size</span><span className="doctor-stat-val">{beastInfo.size_mb} MB</span></div>
+                  <div className="doctor-stat"><span className="doctor-stat-label">Targets</span><span className="doctor-stat-val">{beastInfo.targets}</span></div>
+                  <div className="doctor-stat"><span className="doctor-stat-label">Chat sessions</span><span className="doctor-stat-val">{beastInfo.sessions}</span></div>
+                  <div className="doctor-stat"><span className="doctor-stat-label">Location</span><span className="doctor-stat-val" style={{ fontSize: "12px" }}>{beastInfo.path}</span></div>
+                </div>
+              )}
+              <div className="data-actions">
+                <button className="primary" onClick={doExport}>⭳ Export backup</button>
+                <label className={`ghost-btn file-btn ${importing ? "busy" : ""}`}>
+                  {importing ? "Importing…" : "⭱ Import backup"}
+                  <input type="file" accept=".zip,application/zip" style={{ display: "none" }} disabled={importing}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) doImport(f); e.currentTarget.value = ""; }} />
+                </label>
+              </div>
+              <p className="settings-hint">Importing merges a backup over your current data (existing files are overwritten). Caches and logs aren't included in exports.</p>
             </>
           )}
         </div>

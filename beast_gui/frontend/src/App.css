@@ -1893,6 +1893,9 @@
 }
 .copy-mini:hover { color: #fff; border-color: #444; }
 .doctor-allgood { color: #3dd68c; font-size: 13px; }
+.data-actions { display: flex; gap: 10px; margin: 4px 0; }
+.file-btn { cursor: pointer; display: inline-flex; align-items: center; }
+.file-btn.busy { opacity: 0.6; cursor: default; }
 .ghost-btn {
   background: none;
   border: 1px solid var(--border);

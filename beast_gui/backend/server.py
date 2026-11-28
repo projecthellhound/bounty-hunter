@@ -35,7 +35,7 @@ if str(_REPO_ROOT) not in sys.path:
 # hang forever waiting on a stdin read nothing will ever satisfy.
 os.environ.setdefault("BEAST_TUI", "1")
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -277,6 +277,99 @@ def get_models():
         return {"models": list_available_models()}
     except Exception as exc:
         return {"models": [], "error": str(exc)}
+
+
+_BEAST_DIR = Path(os.path.expanduser("~")) / ".beast"
+# Caches + regenerable fingerprint DBs — not worth putting in a backup.
+_EXPORT_SKIP_DIRS = {"gui_webview", "logs", "__pycache__", ".cache"}
+_EXPORT_SKIP_FILES = {"wappalyzer_tech.json", "wappalyzer_cats.json"}
+
+
+@app.get("/api/beast-info")
+def get_beast_info():
+    """Size + contents of ~/.beast for the Settings → Data tab."""
+    total = 0
+    targets = sessions = 0
+    try:
+        for root, dirs, files in os.walk(_BEAST_DIR):
+            dirs[:] = [d for d in dirs if d not in _EXPORT_SKIP_DIRS]
+            for f in files:
+                try:
+                    total += (Path(root) / f).stat().st_size
+                except Exception:
+                    pass
+        td = _BEAST_DIR / "targets"
+        if td.is_dir():
+            targets = sum(1 for p in td.iterdir() if p.is_dir())
+        sd = _BEAST_DIR / "gui_sessions"
+        if sd.is_dir():
+            sessions = sum(1 for p in sd.glob("*.json"))
+    except Exception:
+        pass
+    return {"path": str(_BEAST_DIR), "size_mb": round(total / (1024 * 1024), 1), "targets": targets, "sessions": sessions}
+
+
+@app.get("/api/export")
+def export_backup():
+    """Stream a .zip backup of ~/.beast (targets, sessions, findings, config,
+    lessons) so it can be moved to another machine or into the Docker volume —
+    caches/logs/fingerprint DBs excluded."""
+    import tempfile
+    import zipfile
+    import datetime
+    from fastapi.responses import FileResponse
+    from starlette.background import BackgroundTask
+
+    tmp = tempfile.NamedTemporaryFile(prefix="beast-backup-", suffix=".zip", delete=False)
+    tmp.close()
+    with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as z:
+        for root, dirs, files in os.walk(_BEAST_DIR):
+            dirs[:] = [d for d in dirs if d not in _EXPORT_SKIP_DIRS]
+            for f in files:
+                if f in _EXPORT_SKIP_FILES:
+                    continue
+                fp = Path(root) / f
+                try:
+                    z.write(fp, fp.relative_to(_BEAST_DIR))
+                except Exception:
+                    pass
+    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    return FileResponse(
+        tmp.name, media_type="application/zip", filename=f"beast-backup-{ts}.zip",
+        background=BackgroundTask(lambda: os.path.exists(tmp.name) and os.remove(tmp.name)),
+    )
+
+
+@app.post("/api/import")
+async def import_backup(request: Request):
+    """Restore a backup zip (raw request body) into ~/.beast. Merges over
+    existing files; path-traversal-guarded so a crafted zip can't escape."""
+    import io
+    import zipfile
+
+    data = await request.body()
+    if not data:
+        return JSONResponse({"status": "error", "error": "empty_body"}, status_code=400)
+    base = _BEAST_DIR.resolve()
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            members = z.namelist()
+            written = 0
+            for m in members:
+                if m.endswith("/"):
+                    continue
+                dest = (_BEAST_DIR / m).resolve()
+                if not str(dest).startswith(str(base) + os.sep) and dest != base:
+                    continue  # skip path traversal
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                with z.open(m) as src, open(dest, "wb") as out:
+                    out.write(src.read())
+                written += 1
+        return {"status": "success", "files": written}
+    except zipfile.BadZipFile:
+        return JSONResponse({"status": "error", "error": "not_a_zip"}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
 
 
 @app.get("/api/doctor")
