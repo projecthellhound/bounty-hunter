@@ -1,0 +1,42 @@
+{
+  "name": "hexbrain",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "access": "node scripts/access.mjs",
+    "lint": "eslint",
+    "ingest:list": "node scripts/ingest.mjs list",
+    "ingest:details": "node scripts/ingest.mjs details",
+    "ingest:status": "node scripts/ingest.mjs status",
+    "test:e2e": "node tests/e2e.mjs",
+    "ingest:import": "node scripts/ingest.mjs import",
+    "ingest:logos": "node scripts/ingest.mjs logos --max 500",
+    "ingest:refresh": "node scripts/ingest.mjs import && node scripts/ingest.mjs details --max 20000 && node scripts/ingest.mjs index && node scripts/ingest.mjs payloads && node scripts/ingest.mjs cves && node scripts/ingest.mjs cvenow && node scripts/ingest.mjs subdomains && node scripts/ingest.mjs logos --max 500",
+    "test:auth": "node tests/auth.mjs",
+    "ingest:index": "node scripts/ingest.mjs index",
+    "ingest:payloads": "node scripts/ingest.mjs payloads",
+    "ingest:cves": "node scripts/ingest.mjs cves",
+    "ingest:subdomains": "node scripts/ingest.mjs subdomains",
+    "ingest:cvenow": "node scripts/ingest.mjs cvenow"
+  },
+  "dependencies": {
+    "next": "16.4.6",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.6",
+    "typescript": "^5"
+  },
+  "packageManager": "pnpm@10.30.3"
+}

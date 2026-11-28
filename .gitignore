@@ -17,8 +17,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -215,7 +215,7 @@ __marimo__/
 hellhound/storage/*
 !hellhound/storage/.gitkeep
 run_diff.py
-*.json
+/*.json
 /recon/
 
 # JavaScript / Node
