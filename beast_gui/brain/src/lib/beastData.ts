@@ -149,6 +149,19 @@ interface StoredItem {
   bounty?: number;
 }
 
+export type BeastGraph = {
+  stamp: number;
+  classes: GraphClass[];
+  links: [string, string, number][];
+  programs: GraphProgram[];
+  cveYears: GraphYear[];
+  cveRing: { id: string; name: string }[];
+  surfaces: GraphSurface[];
+  total: number;
+  weaknessCount: number;
+  totalBounty: number;
+};
+
 class BeastStore {
   private itemsById = new Map<string | number, StoredItem>();
   private itemsByWeakness = new Map<string, StoredItem[]>();
@@ -156,7 +169,7 @@ class BeastStore {
   private toolsByFamily = new Map<string, StoredItem[]>();
   private lessons: Lesson[] = [];
   private lessonsById = new Map<string, Lesson>();
-  private graphCache: Graph | null = null;
+  private graphCache: BeastGraph | null = null;
   private idCounter = 1000;
   private sig = ""; // fingerprint of the source files, for live auto-reload
 
@@ -452,7 +465,7 @@ class BeastStore {
     list.push(item);
   }
 
-  public getGraph(): Graph {
+  public getGraph(): BeastGraph {
     this.maybeReload();
     if (this.graphCache) return this.graphCache;
 

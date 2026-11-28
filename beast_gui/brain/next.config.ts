@@ -11,7 +11,6 @@ const nextConfig: NextConfig = {
   // launches. Some orphaned pages carry pre-existing type/lint issues; skip
   // those gates so the build never blocks the Brain from coming up.
   typescript: { ignoreBuildErrors: true },
-  eslint: { ignoreDuringBuilds: true },
   distDir: process.env.NEXT_DIST_DIR || ".next", // lets a check build run beside a running dev server
   // One address for the site: the www form sends visitors (and search engines) to the bare domain.
   async redirects() {
