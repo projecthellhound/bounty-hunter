@@ -112,7 +112,7 @@ flowchart TD
 
 ## Installation & Setup
 
-Everything you need to install, configure AI backends, and run Bounty Hunter in one unified workflow. The steps below cover the quick path — for more detail on any one piece (model routing options, Burp, or Caido), see the [step-by-step setup guides](docs/README.md).
+Everything you need to install, configure AI backends, and run Bounty Hunter in one unified workflow. The steps below cover the quick path — for more detail on any one piece (model routing options, Burp, or Caido), see the [step-by-step setup guides](docs/README.md). If you encounter any installation or dependency issues, see the [Troubleshooting & FAQ guide](docs/troubleshooting.md).
 
 ### 1. Requirements & Prerequisites
 
@@ -212,6 +212,8 @@ Guides: [HexBrain](docs/mcp-hexbrain-setup.md) · [Burp](docs/mcp-burp-setup.md)
 > /setup tools auto-install on    # auto-install missing recon tools on demand
 > /setup set-key <tool> <key>     # a few recon tools need their own free key; /setup shows which
 ```
+
+If any checks fail or dependencies are missing, see the [Troubleshooting Guide](docs/troubleshooting.md).
 
 ---
 

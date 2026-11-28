@@ -10,6 +10,7 @@ piece.
 | [Burp Suite MCP Setup](mcp-burp-setup.md) | Connecting Burp Suite's MCP server so bounty-hunter can drive Burp directly |
 | [Caido Setup](mcp-caido-setup.md) | Connecting Caido — recommended via the caido-mcp-server OAuth integration (66 tools), with the built-in GraphQL integration as a no-install fallback |
 | [HexBrain Setup](mcp-hexbrain-setup.md) | Connecting HexBrain — a free hosted MCP over 15k+ disclosed HackerOne reports, playbooks, payloads & program history the model mines mid-hunt |
+| [Troubleshooting & FAQ](troubleshooting.md) | Resolving install, Go version, Node/pnpm, and Brain build issues |
 
 If something here doesn't match what you're seeing, run `/mcp` or `/model`
 inside bounty-hunter first — both print their current state and the exact
