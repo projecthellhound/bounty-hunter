@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────
-#  HELLHOUND — Updater v12.5 (Cinematic)
+#  BEAST (Bounty Hunter) — Updater v12.6
 #  Pulls the latest changes from Git and refreshes the installation.
 # ─────────────────────────────────────────────────────────────────────
 
@@ -122,5 +122,5 @@ if [ -f "install.sh" ]; then
 fi
 
 echo ""
-echo -e "  ${GRN}${BLD}Update complete.${RST} HELLHOUND is now on the latest version.\n"
+echo -e "  ${GRN}${BLD}Update complete.${RST} Beast is now on the latest version.\n"
 echo ""

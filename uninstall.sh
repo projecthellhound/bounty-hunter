@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ══════════════════════════════════════════════════════
-#  HELLHOUND — Uninstall Script
+#  BEAST (Bounty Hunter) — Uninstall Script
 #  Reverses everything install.sh created. Safe to run
 #  from any directory.
 #

@@ -115,9 +115,15 @@ flowchart TD
 Everything you need to install, configure AI backends, and run Bounty Hunter in one unified workflow. The steps below cover the quick path — for more detail on any one piece (model routing options, Burp, or Caido), see the [step-by-step setup guides](docs/README.md).
 
 ### 1. Requirements & Prerequisites
-- **Python**: Version 3.10 or higher (Python 3.12 / 3.13 recommended).
-- **Go**: Version 1.20+ (required for the ProjectDiscovery tools, Gowitness, and FFUF).
-- **Git & Curl**: required for installation and updates.
+
+> **TL;DR for Linux users:** `install.sh` automatically installs all prerequisites below (Python, Go, Node, curl, git) before doing anything else — just run it and it handles everything.
+
+- **Python 3.10+** (3.12 / 3.13 recommended) — `install.sh` installs this if missing.
+- **Go 1.21+** — required for the full recon arsenal (subfinder, httpx, naabu, nuclei, ffuf, etc.). `install.sh` installs this automatically, including downloading the official binary if the distro package is too old.
+- **Node.js / npm** — required for the Brain tab in `beast --gui`. `install.sh` installs this automatically. The main TUI (`beast`) and classic console (`beast --classic`) work without it.
+- **Git & curl** — required for installation. `install.sh` installs these if missing.
+
+If you are on a fresh machine, just run `install.sh` — it handles all of the above before doing anything else and gives you a clear error with the exact fix command if anything fails.
 
 #### Platform support
 

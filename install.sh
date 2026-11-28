@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ══════════════════════════════════════════════════════
-#  HELLHOUND — Install Script (v12.7.0)
+#  BEAST (Bounty Hunter) — Install Script (v12.8.0)
 #  Run once from the project root directory.
-#  After this, type `hellhound` from anywhere.
+#  After this, type `beast` from anywhere.
 # ══════════════════════════════════════════════════════
 
 set -e
@@ -86,7 +86,168 @@ stop_animation() {
 
 trap "stop_animation" EXIT INT TERM
 
-echo -e "\n${RED}${BLD}  HELLHOUND — Install${RST}\n"
+echo -e "\n${RED}${BLD}  BEAST — Bounty Hunter Install${RST}\n"
+
+# ── 0. System Prerequisites ────────────────────────────
+# Install Python, Node/npm, Go, and curl before anything else.
+# This is the section that was missing — fresh machines need these
+# before pip, npm, or go install can run. All best-effort + explicit
+# error messages so users know exactly what failed and why.
+_APT_LOCKED() {
+    pgrep -x apt >/dev/null 2>&1 || pgrep -x apt-get >/dev/null 2>&1 || \
+    pgrep -x dpkg >/dev/null 2>&1 || pgrep -x unattended-upgr >/dev/null 2>&1
+}
+
+_HAS_SUDO() { command -v sudo &>/dev/null && { [ "$EUID" -eq 0 ] || sudo -n true 2>/dev/null; }; }
+
+_apt_install() {
+    # Install one or more apt packages, skip gracefully if apt is locked or unavailable.
+    if ! command -v apt-get &>/dev/null; then return 1; fi
+    if _APT_LOCKED; then
+        warn "apt is locked by another process — skipping: $*"
+        warn "Re-run install.sh after the other package manager finishes."
+        return 1
+    fi
+    if _HAS_SUDO && [ "$EUID" -ne 0 ]; then
+        sudo apt-get install -y -q "$@" 2>&1 | grep -v "^Reading\|^Building\|^Setting" || true
+    else
+        apt-get install -y -q "$@" 2>&1 | grep -v "^Reading\|^Building\|^Setting" || true
+    fi
+}
+
+info "Checking system prerequisites…"
+
+# ── Python 3.10+ ──────────────────────────────────────
+PYTHON_OK=false
+for py in python3.13 python3.12 python3.11 python3.10 python3; do
+    if command -v "$py" &>/dev/null; then
+        VER="$("$py" -c 'import sys; print(sys.version_info[:2])'  2>/dev/null)"
+        if "$py" -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>/dev/null; then
+            PYTHON_OK=true
+            # Ensure `python3` resolves to this binary
+            if ! command -v python3 &>/dev/null; then
+                ln -sf "$(command -v "$py")" "$HOME/.local/bin/python3" 2>/dev/null || true
+            fi
+            break
+        fi
+    fi
+done
+if ! $PYTHON_OK; then
+    info "Python 3.10+ not found — installing…"
+    if [ -f /etc/debian_version ]; then
+        _apt_install python3 python3-pip python3-venv python3-dev || true
+    elif command -v brew &>/dev/null; then
+        brew install python@3.12 &>/dev/null || true
+    elif command -v dnf &>/dev/null; then
+        dnf install -y python3 python3-pip &>/dev/null || true
+    elif command -v pacman &>/dev/null; then
+        pacman -Sy --noconfirm python python-pip &>/dev/null || true
+    fi
+    if ! command -v python3 &>/dev/null; then
+        error "Python 3.10+ is required but could not be installed automatically.
+  On Debian/Kali/Ubuntu:  sudo apt install python3 python3-venv python3-pip
+  On macOS:               brew install python@3.12
+  On Fedora/RHEL:         sudo dnf install python3
+  On Arch:                sudo pacman -S python
+Then re-run: ./install.sh"
+    fi
+fi
+success "Python ready: $(python3 --version 2>&1)"
+
+# Ensure python3-venv is installed (Debian splits it into a separate package)
+if [ -f /etc/debian_version ] && ! python3 -m venv --help &>/dev/null 2>&1; then
+    info "Installing python3-venv…"
+    _apt_install python3-venv python3-dev || true
+fi
+
+# ── Node.js / npm (needed for beast --gui brain tab) ──
+if ! command -v node &>/dev/null || ! command -v npm &>/dev/null; then
+    info "Node.js / npm not found — installing…"
+    if [ -f /etc/debian_version ]; then
+        # Use NodeSource for a modern LTS (Debian repos often ship an ancient Node)
+        if command -v curl &>/dev/null; then
+            curl -fsSL https://deb.nodesource.com/setup_lts.x 2>/dev/null | \
+                { _HAS_SUDO && sudo bash || bash; } &>/dev/null || true
+        fi
+        _apt_install nodejs || true
+    elif command -v brew &>/dev/null; then
+        brew install node &>/dev/null || true
+    elif command -v dnf &>/dev/null; then
+        dnf install -y nodejs npm &>/dev/null || true
+    elif command -v pacman &>/dev/null; then
+        pacman -Sy --noconfirm nodejs npm &>/dev/null || true
+    fi
+    if command -v node &>/dev/null; then
+        success "Node.js ready: $(node --version)"
+    else
+        warn "Node.js not installed — the Brain tab in 'beast --gui' won't be available.
+  Install Node.js (https://nodejs.org/en/download) then re-run: ./install.sh"
+    fi
+else
+    success "Node.js ready: $(node --version)"
+fi
+
+# ── Go (needed for the entire recon arsenal) ───────────
+if ! command -v go &>/dev/null; then
+    info "Go not found — installing…"
+    if [ -f /etc/debian_version ]; then
+        _apt_install golang-go || true
+    elif command -v brew &>/dev/null; then
+        brew install go &>/dev/null || true
+    elif command -v dnf &>/dev/null; then
+        dnf install -y golang &>/dev/null || true
+    elif command -v pacman &>/dev/null; then
+        pacman -Sy --noconfirm go &>/dev/null || true
+    fi
+    # If apt's Go is too old (< 1.21), try downloading the official binary
+    if ! command -v go &>/dev/null || ! go version 2>/dev/null | grep -qE 'go1\.(2[1-9]|[3-9][0-9])'; then
+        info "Fetching official Go binary (repo version may be outdated)…"
+        ARCH="$(uname -m)"
+        case "$ARCH" in x86_64) GOARCH="amd64" ;; aarch64|arm64) GOARCH="arm64" ;; *) GOARCH="" ;; esac
+        if [ -n "$GOARCH" ] && command -v curl &>/dev/null; then
+            GO_VER="$(curl -fsSL 'https://go.dev/VERSION?m=text' 2>/dev/null | head -1 || echo 'go1.22.5')"
+            TMP_GO="$(mktemp -d)"
+            if curl -fsSL "https://go.dev/dl/${GO_VER}.linux-${GOARCH}.tar.gz" -o "$TMP_GO/go.tar.gz" 2>/dev/null; then
+                rm -rf /usr/local/go 2>/dev/null || true
+                if _HAS_SUDO; then sudo tar -C /usr/local -xzf "$TMP_GO/go.tar.gz" &>/dev/null
+                else tar -C "$HOME" -xzf "$TMP_GO/go.tar.gz" &>/dev/null && mv "$HOME/go" "$HOME/.go-sdk"; fi
+                rm -rf "$TMP_GO"
+                export PATH="/usr/local/go/bin:$HOME/.go-sdk/bin:$PATH"
+            else
+                rm -rf "$TMP_GO"
+            fi
+        fi
+    fi
+    if command -v go &>/dev/null; then
+        success "Go ready: $(go version)"
+    else
+        warn "Go not installed — the recon arsenal (subfinder, httpx, nuclei, etc.) won't be available.
+  Install Go from https://go.dev/dl/ then re-run: ./install.sh"
+    fi
+else
+    success "Go ready: $(go version)"
+fi
+
+# ── curl (used throughout install) ────────────────────
+if ! command -v curl &>/dev/null; then
+    info "curl not found — installing…"
+    if [ -f /etc/debian_version ]; then _apt_install curl || true
+    elif command -v brew &>/dev/null; then brew install curl &>/dev/null || true
+    elif command -v dnf &>/dev/null; then dnf install -y curl &>/dev/null || true
+    fi
+    command -v curl &>/dev/null && success "curl ready" || warn "curl unavailable — some downloads may fail"
+fi
+
+# ── git (needed for repo bootstrap) ───────────────────
+if ! command -v git &>/dev/null; then
+    info "git not found — installing…"
+    if [ -f /etc/debian_version ]; then _apt_install git || true
+    elif command -v brew &>/dev/null; then brew install git &>/dev/null || true
+    elif command -v dnf &>/dev/null; then dnf install -y git &>/dev/null || true
+    fi
+fi
+
+echo ""
 
 # ── 1. Preparation & Remote Bootstrap ─────────────────
 if [ ! -f "setup.py" ]; then
@@ -168,11 +329,11 @@ rm -rf "$VENV_DIR"/lib/python*/site-packages/hellhound*.dist-info 2>/dev/null ||
 "$VENV_DIR/bin/pip" uninstall -y hellhound --quiet 2>/dev/null || true
 if ! _pip_install_with_retry -e "$PROJECT_ROOT"; then
     stop_animation
-    error "Could not install HELLHOUND's core dependencies after 3 attempts, even with an extended network timeout. This usually means the connection to pypi.org is too unstable/slow to complete a package download at all (not just slow enough to need a longer timeout) — check your network connection and re-run ./install.sh, or install.sh/update.sh later via \`/update deps\` once Hellhound itself is running."
+    error "Could not install Beast's core dependencies after 3 attempts, even with an extended network timeout. This usually means the connection to pypi.org is too unstable/slow — check your network and re-run ./install.sh, or run \`/update deps\` once Beast is running."
 fi
 stop_animation
-success "HELLHOUND core engine installed"
-info "Interactive Textual TUI ready — run 'beast' for it, or 'beast --classic' for the classic console."
+success "Beast core engine installed"
+info "Interactive Textual TUI ready — run 'beast' or 'beast --classic' for the console."
 
 # ── GUI extras (beast --gui native desktop window) ─────
 info "Installing GUI backend dependencies (FastAPI + pywebview)..."
@@ -201,20 +362,23 @@ if _pip_install_with_retry -e "$PROJECT_ROOT[gui]"; then
     BRAIN_DIR="$PROJECT_ROOT/beast_gui/brain"
     if [ -f "$BRAIN_DIR/package.json" ]; then
         if command -v npm &>/dev/null; then
+            # The Brain declares "packageManager": "pnpm@..." — use npx to auto-
+            # download the right pnpm version without requiring a global install.
             # Install deps (once) then build, so the GUI serves the Brain with
             # `next start` — it binds in ~1s, vs a slow `next dev` first-compile
             # that makes the Brain tab look stuck on first open.
             if [ ! -x "$BRAIN_DIR/node_modules/.bin/next" ]; then
                 info "Installing Brain dependencies (one-time, ~a minute)…"
-                (cd "$BRAIN_DIR" && npm install --silent 2>/dev/null) \
-                    || warn "Brain deps didn't install — Brain tab offline until: cd beast_gui/brain && npm install && npm run build"
+                (cd "$BRAIN_DIR" && npx --yes pnpm install --frozen-lockfile 2>/dev/null) \
+                    || (cd "$BRAIN_DIR" && npx --yes pnpm install 2>/dev/null) \
+                    || warn "Brain deps didn't install — Brain tab offline until: cd beast_gui/brain && npx pnpm install && npx pnpm run build"
             fi
             if [ -x "$BRAIN_DIR/node_modules/.bin/next" ]; then
                 if [ -f "$BRAIN_DIR/.next/BUILD_ID" ]; then
                     success "Brain ready (knowledge graph in 'beast --gui' → Brain tab)"
                 else
                     info "Building the Brain (one-time)…"
-                    if (cd "$BRAIN_DIR" && npm run build --silent >/dev/null 2>&1); then
+                    if (cd "$BRAIN_DIR" && npx --yes pnpm run build >/dev/null 2>&1); then
                         success "Brain ready (knowledge graph in 'beast --gui' → Brain tab)"
                     else
                         warn "Brain build didn't finish — it still runs in dev mode (slower first open)."
@@ -222,7 +386,7 @@ if _pip_install_with_retry -e "$PROJECT_ROOT[gui]"; then
                 fi
             fi
         else
-            warn "Node/npm missing — the GUI works, but its Brain tab needs: cd beast_gui/brain && npm install && npm run build"
+            warn "Node/npm missing — the GUI works, but its Brain tab needs: cd beast_gui/brain && npx pnpm install && npx pnpm run build"
         fi
     fi
 else
@@ -439,11 +603,11 @@ if [ "${SKIP_OLLAMA:-0}" = "1" ]; then
     warn "Skipping Ollama install (SKIP_OLLAMA=1)"
 else
     echo ""
-    info "HELLHOUND can use a local model (via Ollama) or a cloud provider (NVIDIA NIM, OpenAI, etc.)."
+    info "Beast can use a local model (via Ollama) or a cloud provider (OpenAI, Anthropic, NVIDIA NIM, etc.)."
     read -p "$(echo -e "${CYN}[?]${RST} Set up a local model now? [Y/n]: ")" -r PROMPT_REPLY < "$TTY" || PROMPT_REPLY=""
 
     if [[ "$PROMPT_REPLY" =~ ^[Nn]$ ]]; then
-        info "Skipping local model setup. Configure a cloud provider via /model after first launch."
+        info "Skipping local model setup — configure a cloud provider via /model after first launch."
     else
         echo -e "${CYN}[?]${RST} Which local model?"
         echo "  1) qwen2.5:3b-instruct   (recommended — fast, ~2GB, good tool-calling reliability)"
@@ -466,7 +630,7 @@ else
                 success "Ollama installed successfully"
             else
                 warn "Ollama install failed — you can install it manually: https://ollama.com/download"
-                warn "Hellhound will still work with cloud API keys without local AI."
+                warn "Beast will still work with cloud API keys (/model after first launch)."
             fi
         fi
 
@@ -589,17 +753,22 @@ success "Beast registered — search for it in your application menu (opens the 
 
 # ── 8. Done ──────────────────────────────────────────
 echo ""
-echo -e "  ${GRN}${BLD}HELLHOUND installed successfully.${RST}"
+echo -e "  ${GRN}${BLD}Beast installed successfully.${RST}"
 echo -e "  Venv    : ${CYN}$VENV_DIR${RST}"
-echo -e "  Command : ${CYN}hellhound${RST}"
+echo -e "  Command : ${CYN}beast${RST}  (also works as: hellhound)"
 if [ -n "$OLLAMA_MODEL" ] && command -v ollama &>/dev/null; then
     echo -e "  Local AI: ${CYN}Ollama ($OLLAMA_MODEL)${RST} — configured as orchestrator"
 elif command -v ollama &>/dev/null; then
-    echo -e "  Local AI: ${CYN}Ollama${RST} — use ${YLW}/model orchestrator ollama <model>${RST}"
+    echo -e "  Local AI: ${CYN}Ollama${RST} — use ${YLW}/model orchestrator ollama <model>${RST} to pick a model"
 else
-    echo -e "  Local AI: ${YLW}Not installed${RST} — configure cloud providers via /model"
+    echo -e "  Local AI: ${YLW}Not installed${RST} — run /model inside Beast to set a cloud provider"
 fi
 echo ""
-echo -e "  ${YLW}Activate now:${RST}"
+echo -e "  ${YLW}Activate now (required once):${RST}"
 echo -e "    source $SHELL_RC"
+echo ""
+echo -e "  ${CYN}Quick start:${RST}"
+echo -e "    beast                  # Interactive TUI"
+echo -e "    beast --classic        # Classic console"
+echo -e "    beast --gui            # Desktop GUI window"
 echo ""
